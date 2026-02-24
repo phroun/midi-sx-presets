@@ -13,8 +13,8 @@
 #
 # destinations:
 #   0:
-#     name: Main Synth
-#     cc_names: synth_ccs
+#     name: NerdSeq
+#     cc_names: nerdseq_ccs
 #   1:
-#     name: FX Rack
-#     cc_names: effects_ccs
+#     name: BlueBox
+#     cc_names: bluebox_ccs
