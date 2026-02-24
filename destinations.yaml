@@ -1,0 +1,20 @@
+# Destination Map (optional)
+#
+# Defines logical "destinations" that group CCs within a single preset.
+# Each destination can reference a named CC-name set from cc_names.yaml
+# (using the cc_name_sets format).  If omitted, the default set is used.
+#
+# During recording, the SysEx START_RECORD command includes a destination
+# byte to select which destination receives subsequent CCs.  On recall,
+# a SysEx destination marker is sent before each group so the receiver
+# knows which CCs belong where.
+#
+# Example (uncomment and customise for your setup):
+#
+# destinations:
+#   0:
+#     name: Main Synth
+#     cc_names: synth_ccs
+#   1:
+#     name: FX Rack
+#     cc_names: effects_ccs

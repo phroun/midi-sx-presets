@@ -1,10 +1,25 @@
 # MIDI CC Name Mappings
 #
-# Maps CC numbers to human-readable names. These names are used in preset
-# files instead of raw numbers, making presets much easier to read and edit.
+# Maps CC numbers to human-readable names used in preset files.
 #
-# Copy this file to ~/.midi-sx-presets/cc_names.yaml (or pass --config-dir)
-# and customise it for your gear.
+# Two formats are supported:
+#
+#   FLAT (simple — one set of names used for everything):
+#     cc_names:
+#       1: modulation
+#       7: volume
+#
+#   NAMED SETS (for multi-destination setups — referenced by destinations.yaml):
+#     cc_name_sets:
+#       synth_ccs:
+#         1: modulation
+#         74: filter_cutoff
+#       effects_ccs:
+#         1: mod_depth
+#         20: delay_time
+#
+# When using destinations, put a "default" set in cc_name_sets for any
+# destination that doesn't specify its own set.
 
 cc_names:
   1: modulation
