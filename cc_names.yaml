@@ -21,10 +21,41 @@
 # When using destinations, put a "default" set in cc_name_sets for any
 # destination that doesn't specify its own set.
 
-cc_names:
-  1: modulation
-  7: volume
-  10: pan
-  11: expression
-  64: sustain
-  74: filter_cutoff
+cc_name_sets:
+  mix_ccs:
+    3: to_duck_out
+    7: to_perf_filter
+    9: to_bypass_duck
+    10: pan
+    11: to_dsp
+    12: to_loop_a
+    13: to_loop_b
+  polysynth_ccs:
+    3: to_duck_out
+    7: to_perf_filter
+    9: to_bypass_duck
+    10: stereo_pan
+    11: to_dsp
+    12: to_loop_a
+    13: to_loop_b
+    70: poly_vcf_cutoff
+    71: poly_morph
+    72: poly_vcf_release
+    73: poly_vcf_attack
+    74: poly_vcf_sustain
+    75: poly_vcf_decay
+    77: poly_release
+    78: poly_attack
+    79: poly_sustain
+    80: poly_decay
+    85: global_perf_out
+    86: poly_tremolo_ratee
+    87: poly_wah_rate
+    88: poly_vibrato_rate
+    89: poly_pwm_rate
+    90: poly_to_delay
+    91: poly_to_reverb
+    92: poly_tremolo_depth
+    93: poly_wah_depth
+    94: poly_vibrato_depth
+    95: poly_pwm_depth
