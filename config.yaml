@@ -1,0 +1,14 @@
+# MIDI SysEx Preset Manager — configuration
+#
+# Copy this file to ~/.midi-sx-presets/config.yaml (or pass --config-dir)
+# to customise the service.
+
+# Name of the virtual MIDI port created by the service.
+# Connect your DAW / MainStage to this port.
+port_name: MIDI SX Presets
+
+# SysEx device ID (0x00–0x7F). Change this if you run multiple instances.
+device_id: 0x01
+
+# SysEx manufacturer ID. 0x7D = non-commercial / educational.
+manufacturer_id: 0x7D
