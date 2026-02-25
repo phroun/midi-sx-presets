@@ -320,6 +320,8 @@ class MidiPresetService:
                         copy = dict(action)
                         copy["cc"] = cc_num
                         copy["channel"] = ch + 1
+                        copy["name"] = self.resolved_destinations.get(
+                            (ch, cc_num), raw)
                         expanded.append(copy)
                 else:
                     expanded.append(action)
