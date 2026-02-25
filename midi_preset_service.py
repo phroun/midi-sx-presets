@@ -535,6 +535,8 @@ class MidiPresetService:
         self.destination_states = {}    # "cc_ch" -> current value
         self._map_log_times = {}        # "cc_ch" -> last log timestamp (debounce)
         self.poly_states = {}           # pool_key -> {held: [...], active: [...]}
+        self._center_trackers = {}      # dest_key -> center-snap wiggle state
+        self._center_timers = {}        # dest_key -> threading.Timer for idle detect
 
     _POLY_PARAM_KEYS = ("max_polyphony", "fallback_priority", "replace_priority")
 
@@ -964,6 +966,106 @@ class MidiPresetService:
                              value=value)
             )
 
+    # -- Center-snap ("wiggle to center") ------------------------------------
+
+    _CENTER_WINDOW = 2.0        # seconds: reversals must happen within this
+    _CENTER_REVERSALS = 4       # direction changes needed to arm snap
+    _CENTER_IDLE = 0.20         # seconds of no movement → snap fires
+    _CENTER_CONSISTENT = 1.0    # seconds of single-direction → reset tracker
+    _CENTER_VALUE = 63          # value to snap to
+
+    def _update_center_tracker(self, dest_key, delta, target_cc, target_ch,
+                               min_v, max_v):
+        """Track encoder direction changes for a center-enabled destination.
+
+        Called after each relative movement.  When 4+ direction reversals
+        happen within 2 s and then the encoder stops, snaps to 63.
+        Consistent single-direction movement for 1 s resets the tracker.
+        """
+        now = time.monotonic()
+        direction = 1 if delta > 0 else -1
+
+        tr = self._center_trackers.get(dest_key)
+        if tr is None:
+            tr = {
+                "last_dir": direction,
+                "reversals": 0,
+                "first_reversal": now,
+                "dir_start": now,        # when current direction run started
+                "armed": False,
+            }
+            self._center_trackers[dest_key] = tr
+
+        prev_dir = tr["last_dir"]
+
+        if direction != prev_dir:
+            # Direction changed
+            if tr["reversals"] == 0:
+                tr["first_reversal"] = now
+            tr["reversals"] += 1
+            tr["last_dir"] = direction
+            tr["dir_start"] = now
+
+            # Check if reversals happened within the window
+            if now - tr["first_reversal"] > self._CENTER_WINDOW:
+                # Too slow — restart count from this reversal
+                tr["reversals"] = 1
+                tr["first_reversal"] = now
+
+            # Arm if we've hit the threshold
+            if tr["reversals"] >= self._CENTER_REVERSALS:
+                tr["armed"] = True
+        else:
+            # Same direction — check for consistent movement reset
+            if now - tr["dir_start"] >= self._CENTER_CONSISTENT:
+                self._reset_center_tracker(dest_key)
+                return
+
+        # (Re)start the idle timer — if encoder stops while armed, snap
+        self._restart_center_timer(dest_key, target_cc, target_ch,
+                                   min_v, max_v)
+
+    def _restart_center_timer(self, dest_key, target_cc, target_ch,
+                              min_v, max_v):
+        """Cancel any pending idle timer and start a fresh one."""
+        old = self._center_timers.pop(dest_key, None)
+        if old is not None:
+            old.cancel()
+        t = threading.Timer(
+            self._CENTER_IDLE,
+            self._center_idle_fired,
+            args=(dest_key, target_cc, target_ch, min_v, max_v),
+        )
+        t.daemon = True
+        t.start()
+        self._center_timers[dest_key] = t
+
+    def _center_idle_fired(self, dest_key, target_cc, target_ch,
+                           min_v, max_v):
+        """Called from timer thread when encoder has been idle."""
+        self._center_timers.pop(dest_key, None)
+        tr = self._center_trackers.get(dest_key)
+        if tr is None or not tr["armed"]:
+            # Not armed — just a normal pause; reset tracker
+            self._reset_center_tracker(dest_key)
+            return
+
+        # Snap to center
+        center = max(min_v, min(max_v, self._CENTER_VALUE))
+        self._set_dest(target_cc, target_ch, center, min_v, max_v)
+        self._send_cc(target_cc, target_ch, center)
+        name = (self.resolved_destinations.get((target_ch, target_cc))
+                or f"CC{target_cc} ch{target_ch + 1}")
+        _log("CENTER", f"{name} → {center}")
+        self._reset_center_tracker(dest_key)
+
+    def _reset_center_tracker(self, dest_key):
+        """Clear tracker state and cancel any pending timer."""
+        self._center_trackers.pop(dest_key, None)
+        old = self._center_timers.pop(dest_key, None)
+        if old is not None:
+            old.cancel()
+
     def _process_shift(self, msg):
         """Update shift bitmask if msg is a shift CC. Returns True if handled."""
         # Channels are 1-based in config, 0-based in mido — shift CCs match
@@ -1095,9 +1197,17 @@ class MidiPresetService:
                 current = self._get_dest(target_cc, target_ch)
                 output = self._set_dest(target_cc, target_ch, current + delta, min_v, max_v)
             else:
+                delta = None
                 output = self._set_dest(target_cc, target_ch, msg.value, min_v, max_v)
 
             self._send_cc(target_cc, target_ch, output)
+
+            # Center-snap: track encoder wiggle for center-enabled actions
+            if action.get("center") and delta:
+                dest_key = self._dest_key(target_cc, target_ch)
+                self._update_center_tracker(dest_key, delta,
+                                            target_cc, target_ch,
+                                            min_v, max_v)
 
             # Debug: show mapping result (debounced)
             name = (self.resolved_destinations.get(
@@ -1671,6 +1781,11 @@ class MidiPresetService:
         finally:
             self._state_stop.set()
             saver.join(timeout=2)
+            # Cancel any pending center-snap timers
+            for t in self._center_timers.values():
+                t.cancel()
+            self._center_timers.clear()
+            self._center_trackers.clear()
             # Final state flush
             try:
                 self._save_state()
