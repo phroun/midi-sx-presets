@@ -178,8 +178,10 @@ class MidiPresetService:
         _yaml_dump({"cc_names": default_names}, path)
         return {"default": default_names}, default_names
 
-    _DEST_RESERVED_KEYS = {"prefix", "channels"}
-    _CH_RESERVED_KEYS   = {"cc_group", "prefix"}
+    _DEST_RESERVED_KEYS   = {"prefix", "channels"}
+    _CH_RESERVED_KEYS     = {"cc_group", "prefix"}
+    _PRESET_RESERVED_KEYS = {"name", "read_only", "channel", "channels",
+                             "program_change", "cc_values"}
 
     def _load_destinations(self):
         """Load the optional destinations map (destinations.yaml).
@@ -425,35 +427,55 @@ class MidiPresetService:
             self._cmd_device_cmd(data[3:])
 
     def _save_preset_from_state(self, note, channel):
-        """Save the current mapping engine destination states as a preset."""
+        """Save the current mapping engine destination states as a preset.
+
+        CCs whose (channel, cc) pair has a unique name in
+        resolved_destinations are stored as top-level keys.  Everything
+        else falls back to the channels/cc_values dict.
+        """
         # Check write-protection
         existing = self.presets.get(note, {})
         if existing.get("read_only", False):
             _log("DENY", f"Preset {note} is read-only — save rejected.")
             return
 
-        preset = {
-            "name": existing.get("name", f"Preset {note}"),
-            "read_only": existing.get("read_only", False),
-            "channel": channel,
-        }
+        # Start from existing preset, preserving any unrecognized keys
+        preset = dict(existing)
+        preset["name"] = existing.get("name", f"Preset {note}")
+        preset["read_only"] = existing.get("read_only", False)
+        preset["channel"] = channel
+        # Clear stale CC data — we'll rebuild from current state
+        preset.pop("channels", None)
+        preset.pop("cc_values", None)
+        for key in list(preset):
+            if key not in self._PRESET_RESERVED_KEYS and key in self.reverse_destinations:
+                del preset[key]
 
-        # Build channels dict from destination_states (keys are "cc_ch")
-        channels = {}
+        # Partition destination_states into known (flat) and unknown (channeled)
+        unknown_channels = {}
+        named_count = 0
         for key, value in self.destination_states.items():
             parts = key.split("_")
             cc_num, ch = int(parts[0]), int(parts[1])
-            name = self._cc_num_to_name(cc_num)
-            ch_data = channels.setdefault(ch, {})
-            ch_data[name] = value
+            resolved_name = self.resolved_destinations.get((ch, cc_num))
+            if resolved_name is not None:
+                preset[resolved_name] = value
+                named_count += 1
+            else:
+                name = self._cc_num_to_name(cc_num)
+                ch_data = unknown_channels.setdefault(ch, {})
+                ch_data[name] = value
 
-        if channels:
-            preset["channels"] = {ch: {"cc_values": ccs} for ch, ccs in channels.items()}
+        if unknown_channels:
+            preset["channels"] = {ch: {"cc_values": ccs}
+                                  for ch, ccs in unknown_channels.items()}
 
         self.presets[note] = preset
         self._save_preset_to_disk(note)
-        total = sum(len(ccs) for ccs in channels.values())
-        _log("SAVE", f"Preset {note} saved ({total} CCs across {len(channels)} channel(s)).")
+        unknown_count = sum(len(ccs) for ccs in unknown_channels.values())
+        total = named_count + unknown_count
+        _log("SAVE", f"Preset {note} saved ({total} CCs: "
+             f"{named_count} named, {unknown_count} in channels).")
 
     def _cmd_load_preset(self):
         self.load_mode = True
@@ -552,9 +574,13 @@ class MidiPresetService:
         channel = preset.get("channel", 0)
         _log("RECALL", f"Preset {note}: \"{name}\"")
 
+        # 1) Top-level named parameters (resolved via reverse_destinations)
+        self._recall_named(preset)
+
+        # 2) Channeled CC values (fallback for unknowns / legacy)
         if "channels" in preset:
             self._recall_channeled(preset)
-        else:
+        elif "cc_values" in preset:
             # Legacy flat format — all CCs on one channel
             self._recall_single(preset, channel)
 
@@ -565,6 +591,23 @@ class MidiPresetService:
             self.midi_return.send(mido.Message("sysex", data=sysex_data))
             _log("  ->", f"Name: \"{name}\"")
 
+    def _recall_named(self, preset):
+        """Recall top-level named parameters via reverse_destinations."""
+        for key, value in preset.items():
+            if key in self._PRESET_RESERVED_KEYS:
+                continue
+            target = self.reverse_destinations.get(key)
+            if target is None:
+                continue  # unrecognized name — leave it alone
+            ch, cc_num = target
+            if not isinstance(value, int):
+                continue
+            self.midi_return.send(
+                mido.Message("control_change", channel=ch, control=cc_num, value=value)
+            )
+            self._set_dest(cc_num, ch, value)
+            _log("  ->", f"{key} = {value}  (ch{ch + 1}/CC{cc_num})")
+
     def _recall_single(self, preset, channel):
         """Recall a legacy preset with flat cc_values (no channel grouping)."""
         pc = preset.get("program_change")
@@ -574,7 +617,6 @@ class MidiPresetService:
         for cc_name, value in preset.get("cc_values", {}).items():
             cc_num = self._cc_name_to_number(cc_name)
             if cc_num is None:
-                _log("WARN", f"Cannot resolve CC '{cc_name}' — skipping.")
                 continue
             self.midi_return.send(
                 mido.Message("control_change", channel=channel, control=cc_num, value=value)
@@ -589,7 +631,6 @@ class MidiPresetService:
             for cc_name, value in ch_data.get("cc_values", {}).items():
                 cc_num = self._cc_name_to_number(cc_name)
                 if cc_num is None:
-                    _log("WARN", f"Cannot resolve CC '{cc_name}' — skipping.")
                     continue
                 self.midi_return.send(
                     mido.Message("control_change", channel=ch, control=cc_num, value=value)
