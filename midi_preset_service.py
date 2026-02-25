@@ -141,7 +141,7 @@ class MidiPresetService:
         # Transport / mode state
         self.intercept_mode = True   # True = intercept transport for preset mgmt
         self.rec_counter = 0         # Consecutive rec presses
-        self.preset_cursor = None    # Current note for arrow navigation
+        self.preset_cursor = {}      # {channel: note} for arrow navigation
 
         # Persistent state recovery
         self._state_dirty = False
@@ -178,16 +178,22 @@ class MidiPresetService:
                 {k: int(v) for k, v in saved_dests.items()
                  if isinstance(v, (int, float))}
             )
-        # Scalar state
-        if "preset_cursor" in data:
-            self.preset_cursor = data["preset_cursor"]
+        # Preset cursor — now a {channel: note} dict (migrate from legacy scalar)
+        saved_cursor = data.get("preset_cursor")
+        if isinstance(saved_cursor, dict):
+            self.preset_cursor = {int(k): v for k, v in saved_cursor.items()}
+        elif saved_cursor is not None:
+            # Legacy: single note — assign to channel 0
+            self.preset_cursor = {0: int(saved_cursor)}
         if "intercept_mode" in data:
             self.intercept_mode = bool(data["intercept_mode"])
         if "shift_state" in data:
             self.shift_state = int(data["shift_state"])
         n = len(self.destination_states)
+        cursor_str = ", ".join(f"ch{ch + 1}={note}"
+                               for ch, note in sorted(self.preset_cursor.items()))
         _log("INIT", f"Restored state: {n} destinations, "
-             f"cursor={self.preset_cursor}")
+             f"cursors=[{cursor_str}]")
 
     def _save_state(self):
         """Dump current runtime state to disk (atomic write)."""
@@ -313,7 +319,7 @@ class MidiPresetService:
 
     _DEST_RESERVED_KEYS   = {"prefix", "channels"}
     _CH_RESERVED_KEYS     = {"cc_group", "prefix"}
-    _PRESET_RESERVED_KEYS = {"name", "read_only", "channel", "channels",
+    _PRESET_RESERVED_KEYS = {"name", "read_only", "channels",
                              "program_change", "cc_values"}
 
     def _load_destinations(self):
@@ -581,29 +587,49 @@ class MidiPresetService:
         return self.config_dir / PRESETS_SUBDIR
 
     @staticmethod
-    def _preset_filename(note):
-        return f"preset-{note:03d}.yaml"
+    def _preset_filename(channel, note):
+        """Channel is 0-based internally; filenames use 1-based (ch1, ch2…)."""
+        return f"preset-ch{channel + 1}-{note:03d}.yaml"
 
     def _load_presets(self):
+        """Load per-channel preset banks from disk.
+
+        Returns ``{channel: {note: data}}`` (channel is 0-based).
+        Handles both new ``preset-ch{N}-{note}.yaml`` and legacy
+        ``preset-{note}.yaml`` files (legacy loaded into channel 0).
+        """
         pdir = self._presets_dir()
         if not pdir.is_dir():
             pdir.mkdir(parents=True, exist_ok=True)
             return {}
-        presets = {}
+        presets = {}  # channel -> {note -> data}
         for path in sorted(pdir.glob("preset-*.yaml")):
+            stem = path.stem  # e.g. "preset-ch1-048" or legacy "preset-048"
+            parts = stem.split("-")
+            # parts: ["preset", "ch1", "048"] or legacy ["preset", "048"]
             try:
-                note = int(path.stem.split("-", 1)[1])
-            except (IndexError, ValueError):
+                if len(parts) == 3 and parts[1].startswith("ch"):
+                    ch = int(parts[1][2:]) - 1   # 1-based file → 0-based
+                    note = int(parts[2])
+                elif len(parts) == 2:
+                    # Legacy format — assign to channel 0
+                    ch = 0
+                    note = int(parts[1])
+                else:
+                    continue
+            except (ValueError, IndexError):
                 continue
             data = _yaml_load(path)
             if data:
-                presets[note] = data
+                data.pop("channel", None)  # strip legacy field
+                presets.setdefault(ch, {})[note] = data
         return presets
 
-    def _save_preset_to_disk(self, note):
+    def _save_preset_to_disk(self, channel, note):
         pdir = self._presets_dir()
         pdir.mkdir(parents=True, exist_ok=True)
-        _yaml_dump(self.presets[note], pdir / self._preset_filename(note))
+        _yaml_dump(self.presets[channel][note],
+                   pdir / self._preset_filename(channel, note))
 
     # -- CC name <-> number ---------------------------------------------------
 
@@ -664,21 +690,23 @@ class MidiPresetService:
     def _save_preset_from_state(self, note, channel):
         """Save the current mapping engine destination states as a preset.
 
-        CCs whose (channel, cc) pair has a unique name in
-        resolved_destinations are stored as top-level keys.  Everything
-        else falls back to the channels/cc_values dict.
+        *channel* (0-based) selects the preset bank.  CCs whose
+        (channel, cc) pair has a unique name in resolved_destinations
+        are stored as top-level keys.  Everything else falls back to
+        the channels/cc_values dict.
         """
         # Check write-protection
-        existing = self.presets.get(note, {})
+        bank = self.presets.get(channel, {})
+        existing = bank.get(note, {})
         if existing.get("read_only", False):
-            _log("DENY", f"Preset {note} is read-only — save rejected.")
+            _log("DENY", f"Preset ch{channel + 1}/{note} is read-only — save rejected.")
             return
 
         # Start from existing preset, preserving any unrecognized keys
         preset = dict(existing)
         preset["name"] = existing.get("name", f"Preset {note}")
         preset["read_only"] = existing.get("read_only", False)
-        preset["channel"] = channel
+        preset.pop("channel", None)  # strip legacy field
         # Clear stale CC data — we'll rebuild from current state
         preset.pop("channels", None)
         preset.pop("cc_values", None)
@@ -705,11 +733,11 @@ class MidiPresetService:
             preset["channels"] = {ch: {"cc_values": ccs}
                                   for ch, ccs in unknown_channels.items()}
 
-        self.presets[note] = preset
-        self._save_preset_to_disk(note)
+        self.presets.setdefault(channel, {})[note] = preset
+        self._save_preset_to_disk(channel, note)
         unknown_count = sum(len(ccs) for ccs in unknown_channels.values())
         total = named_count + unknown_count
-        _log("SAVE", f"Preset {note} saved ({total} CCs: "
+        _log("SAVE", f"Preset ch{channel + 1}/{note} saved ({total} CCs: "
              f"{named_count} named, {unknown_count} in channels).")
 
     def _cmd_load_preset(self):
@@ -747,21 +775,22 @@ class MidiPresetService:
 
     def _devcmd_status(self, args):
         """Report service status back to the device."""
-        n = len(self.presets)
+        n = sum(len(bank) for bank in self.presets.values())
         mode = "proxy" if self.routing else "standalone"
         tmode = "intercept" if self.intercept_mode else "passthrough"
         self._send_remote(f"status {mode} presets={n} transport={tmode}")
 
     def _devcmd_list(self, args):
-        """Send back a list of stored preset slots."""
+        """Send back a list of stored preset slots (across all channel banks)."""
         if not self.presets:
             self._send_remote("list empty")
             return
-        slots = sorted(self.presets.keys())
         names = []
-        for s in slots:
-            name = self.presets[s].get("name", "")
-            names.append(f"{s}:{name}")
+        for ch in sorted(self.presets):
+            bank = self.presets[ch]
+            for s in sorted(bank):
+                name = bank[s].get("name", "")
+                names.append(f"ch{ch + 1}/{s}:{name}")
         self._send_remote("list " + ",".join(names))
 
     def _devcmd_mode(self, args):
@@ -799,16 +828,16 @@ class MidiPresetService:
 
     # -- Recall ---------------------------------------------------------------
 
-    def _recall_preset(self, note):
-        """Send all stored CC/PC values for *note* back out the MIDI port."""
-        preset = self.presets.get(note)
+    def _recall_preset(self, channel, note):
+        """Send all stored CC/PC values for *note* in *channel*'s bank."""
+        bank = self.presets.get(channel, {})
+        preset = bank.get(note)
         if preset is None:
-            _log("WARN", f"No preset stored for note {note}.")
+            _log("WARN", f"No preset stored for ch{channel + 1}/{note}.")
             return
 
         name = preset.get("name", "")
-        channel = preset.get("channel", 0)
-        _log("RECALL", f"Preset {note}: \"{name}\"")
+        _log("RECALL", f"Preset ch{channel + 1}/{note}: \"{name}\"")
 
         # 1) Top-level named parameters (resolved via reverse_destinations)
         self._recall_named(preset)
@@ -817,8 +846,8 @@ class MidiPresetService:
         if "channels" in preset:
             self._recall_channeled(preset)
         elif "cc_values" in preset:
-            # Legacy flat format — all CCs on one channel
-            self._recall_single(preset, channel)
+            # Legacy flat format — use channel 0 as fallback
+            self._recall_single(preset, 0)
 
         # Send preset name back via SysEx
         if name:
@@ -1326,17 +1355,23 @@ class MidiPresetService:
 
     # -- Transport handling ---------------------------------------------------
 
-    def _handle_transport(self, cc):
-        """Route a transport CC press to the active mode handler."""
+    def _handle_transport(self, cc, channel):
+        """Route a transport CC press to the active mode handler.
+
+        *channel* is the 0-based MIDI channel of the transport CC message,
+        used to select which preset bank to navigate.
+        """
         if self.intercept_mode:
-            self._transport_intercept(cc)
+            self._transport_intercept(cc, channel)
         else:
             self._transport_passthrough(cc)
 
-    def _transport_intercept(self, cc):
+    def _transport_intercept(self, cc, channel):
         """Handle transport in intercept mode (CCs consumed for preset mgmt).
 
-        Rec×1 + note  → save preset to that note
+        *channel* (0-based) selects the preset bank for arrow navigation.
+
+        Rec×1 + note  → save preset to that note (bank chosen by note channel)
         Play          → load mode (next note recalls preset)
         Rec×3 + Stop  → switch to pass-through mode
         Rec×3 + Play  → switch to pass-through mode
@@ -1381,11 +1416,11 @@ class MidiPresetService:
 
         elif cc == CC_REWIND:
             self.load_mode = False
-            self._navigate_preset(-1)
+            self._navigate_preset(channel, -1)
 
         elif cc == CC_FORWARD:
             self.load_mode = False
-            self._navigate_preset(1)
+            self._navigate_preset(channel, 1)
 
     def _transport_passthrough(self, cc):
         """Handle transport in pass-through mode (CCs forwarded to hardware).
@@ -1418,24 +1453,27 @@ class MidiPresetService:
                 _log("MODE", "Switched to INTERCEPT mode")
             # Stop is also forwarded to hardware (handled by caller)
 
-    def _navigate_preset(self, direction):
-        """Move the preset cursor by *direction* (+1/-1) and recall."""
-        slots = sorted(self.presets.keys())
+    def _navigate_preset(self, channel, direction):
+        """Move the preset cursor for *channel*'s bank by *direction* and recall."""
+        bank = self.presets.get(channel, {})
+        slots = sorted(bank.keys())
         if not slots:
-            _log("WARN", "No presets stored — nothing to navigate.")
+            _log("WARN", f"No presets in ch{channel + 1} bank — nothing to navigate.")
             return
 
-        if self.preset_cursor is not None and self.preset_cursor in slots:
-            idx = slots.index(self.preset_cursor) + direction
+        cursor = self.preset_cursor.get(channel)
+        if cursor is not None and cursor in slots:
+            idx = slots.index(cursor) + direction
         else:
             # First navigation: start at beginning or end
             idx = 0 if direction > 0 else len(slots) - 1
 
         idx = idx % len(slots)
-        self.preset_cursor = slots[idx]
+        self.preset_cursor[channel] = slots[idx]
         self._mark_dirty()
-        _log("NAV", f"Preset {self.preset_cursor} (slot {idx + 1}/{len(slots)})")
-        self._recall_preset(self.preset_cursor)
+        _log("NAV", f"Preset ch{channel + 1}/{slots[idx]} "
+             f"(slot {idx + 1}/{len(slots)})")
+        self._recall_preset(channel, slots[idx])
 
     # -- Main message handler -------------------------------------------------
 
@@ -1450,7 +1488,7 @@ class MidiPresetService:
         # Transport CCs (rec, play, stop, arrows)
         if msg.type == "control_change" and msg.control in TRANSPORT_CCS:
             if msg.value > 0:  # Ignore release pulse
-                self._handle_transport(msg.control)
+                self._handle_transport(msg.control, msg.channel)
             if self.intercept_mode:
                 return  # Consumed — do not forward
             self._forward(msg)
@@ -1460,15 +1498,15 @@ class MidiPresetService:
         if msg.type == "note_on" and msg.velocity > 0:
             if self.intercept_mode and self.rec_counter == 1:
                 self.rec_counter = 0
-                self.preset_cursor = msg.note
+                self.preset_cursor[msg.channel] = msg.note
                 self._mark_dirty()
                 self._save_preset_from_state(msg.note, msg.channel)
                 return  # Intercepted
             if self.load_mode:
                 self.load_mode = False
-                self.preset_cursor = msg.note  # Track for arrow navigation
+                self.preset_cursor[msg.channel] = msg.note
                 self._mark_dirty()
-                self._recall_preset(msg.note)
+                self._recall_preset(msg.channel, msg.note)
                 return  # Intercepted
             mapped = self._process_note_mapping(msg)
             if mapped is not None:
@@ -1534,7 +1572,11 @@ class MidiPresetService:
             _log("INIT", f"Virtual port : {port_name}")
         _log("INIT", f"Device ID    : 0x{self.device_id:02X}")
         _log("INIT", f"Manufacturer : 0x{self.manufacturer_id:02X}")
-        _log("INIT", f"Presets      : {len(self.presets)} loaded")
+        total_presets = sum(len(bank) for bank in self.presets.values())
+        bank_info = ", ".join(f"ch{ch + 1}:{len(bank)}"
+                              for ch, bank in sorted(self.presets.items()))
+        _log("INIT", f"Presets      : {total_presets} loaded"
+             + (f" ({bank_info})" if bank_info else ""))
         _log("INIT", f"CC sets      : {cc_count} mappings in {len(self.cc_sets)} set(s)")
         action_count = sum(len(v) for v in self.cc_mappings.values())
         _log("INIT", f"CC mappings  : {len(self.cc_mappings)} source CCs, {action_count} actions")
