@@ -508,6 +508,12 @@ class MidiPresetService:
             self.joystick_ccs.add(j["negative_cc"])
             self.joystick_ccs.add(j["positive_cc"])
 
+        # Note range mappings — list of {low, high, mask, compare, ...}
+        self.note_mappings = data.get("note_mappings", [])
+        for nm in self.note_mappings:
+            nm.setdefault("mask", 0)
+            nm.setdefault("compare", 0)
+
         # Runtime state for the mapping engine
         self.shift_state = 0            # 16-bit bitmask
         self.joystick_states = {}       # index -> {neg_held, pos_held, latch}
@@ -1010,6 +1016,79 @@ class MidiPresetService:
                     f"\"{name}\"")
             self._map_log_debounced(dest_key, line)
 
+    # -- Note range mapping ---------------------------------------------------
+
+    def _process_note_mapping(self, msg):
+        """Run a note message through the note range mapping table.
+
+        Returns a list of mido messages to forward (may be empty if the
+        note matched a range that produced no valid output, or multiple
+        if several ranges matched).  Returns ``None`` if no ranges
+        matched at all (caller should pass through unchanged).
+        """
+        if not self.note_mappings:
+            return None
+
+        note = msg.note
+        src_ch_1based = msg.channel + 1
+        results = []
+        matched = False
+
+        for nm in self.note_mappings:
+            # Range check (inclusive)
+            if note < nm["low"] or note > nm["high"]:
+                continue
+
+            # Channel filter
+            if "from_channel" in nm:
+                if nm["from_channel"] != src_ch_1based:
+                    continue
+
+            # Shift state match
+            if (self.shift_state & nm["mask"]) != nm["compare"]:
+                continue
+
+            matched = True
+
+            # Start with the original note and channel
+            out_note = note
+            out_ch = msg.channel  # 0-based
+
+            # Apply transpose
+            if "transpose" in nm:
+                out_note = note + nm["transpose"]
+                if out_note < 0 or out_note > 127:
+                    # Transposed out of range — skip this action
+                    name = nm.get("name", "")
+                    _log("NOTE", f"note {note} ch{src_ch_1based} "
+                         f"transpose {nm['transpose']:+d} → {out_note} "
+                         f"out of range, skipped \"{name}\"")
+                    continue
+
+            # Apply channel override (YAML is 1-based)
+            if "channel" in nm:
+                out_ch = nm["channel"] - 1
+
+            out_msg = msg.copy(note=out_note, channel=out_ch)
+            results.append(out_msg)
+
+            # Debug logging
+            name = nm.get("name", "")
+            changes = []
+            if out_note != note:
+                changes.append(f"note {note}→{out_note}")
+            if out_ch != msg.channel:
+                changes.append(f"ch{src_ch_1based}→{out_ch + 1}")
+            detail = ", ".join(changes) if changes else "no change"
+            line = (f"{msg.type} note={note} ch{src_ch_1based} "
+                    f"(shift=0x{self.shift_state:04X}) → "
+                    f"{detail} \"{name}\"")
+            _log("NOTE", line)
+
+        if not matched:
+            return None
+        return results
+
     # -- Transport handling ---------------------------------------------------
 
     def _handle_transport(self, cc):
@@ -1156,6 +1235,21 @@ class MidiPresetService:
                 self._mark_dirty()
                 self._recall_preset(msg.note)
                 return  # Intercepted
+            mapped = self._process_note_mapping(msg)
+            if mapped is not None:
+                for m in mapped:
+                    self._forward(m)
+                return
+            self._forward(msg)
+            return
+
+        # Note-off (or note-on with velocity 0)
+        if msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
+            mapped = self._process_note_mapping(msg)
+            if mapped is not None:
+                for m in mapped:
+                    self._forward(m)
+                return
             self._forward(msg)
             return
 
@@ -1209,6 +1303,7 @@ class MidiPresetService:
         _log("INIT", f"CC sets      : {cc_count} mappings in {len(self.cc_sets)} set(s)")
         action_count = sum(len(v) for v in self.cc_mappings.values())
         _log("INIT", f"CC mappings  : {len(self.cc_mappings)} source CCs, {action_count} actions")
+        _log("INIT", f"Note mappings: {len(self.note_mappings)} range(s)")
         _log("INIT", f"Shift CCs    : {sorted(self.shift_ccs)} | Joystick CCs: {sorted(self.joystick_ccs)}")
         tmode = "intercept" if self.intercept_mode else "passthrough"
         _log("INIT", f"Transport    : {tmode}")

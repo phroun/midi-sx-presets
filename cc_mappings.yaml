@@ -9,7 +9,8 @@
 #   3. Joystick CCs → update shift held/latch bits (not forwarded, but mapped)
 #   4. Mapped CCs → ALL matching actions execute in sequence (order matters)
 #   5. Unmapped CCs → silently dropped (not forwarded)
-#   6. Non-CC events (notes, pitch bend, etc.) → passed through unchanged
+#   6. Notes → processed through note_mappings (if any), otherwise passed through
+#   6b. Other non-CC events (pitch bend, etc.) → passed through unchanged
 #   7. Transport CCs (115-119) → handled by transport system before mappings
 #
 # Action matching:
@@ -283,3 +284,43 @@ cc_mappings:
   # Rewind=115, Forward=116, Stop=117, Play=118, Rec=119
   # In intercept mode: consumed for preset navigation/management.
   # In pass-through mode: forwarded to hardware.
+
+# ============================================================================
+# Note Range Mappings
+# ============================================================================
+#
+# note_mappings apply to note-on and note-off messages whose note number
+# falls within [low, high] (inclusive).  They support the same shift-state
+# matching as CC mappings: (shift_state & mask) == compare.
+#
+# Each range entry is a list of actions.  ALL matching actions execute in
+# order (same semantics as cc_mappings).
+#
+# Action fields:
+#   low       - lowest note number in range (0-127, required)
+#   high      - highest note number in range (0-127, required)
+#   mask      - shift bitmask (default 0)
+#   compare   - shift compare value (default 0)
+#   from_channel - only match this source channel (1-based, optional)
+#   transpose - semitones to shift note number (+/-, clamped to 0-127)
+#   channel   - override destination channel (1-based)
+#   name      - descriptive label for logging
+#
+# Notes that match at least one range are forwarded (possibly modified).
+# Notes that match NO ranges are passed through unchanged.
+#
+# Example:
+#
+# note_mappings:
+#   - low: 36
+#     high: 96
+#     mask: 0
+#     compare: 0
+#     transpose: -12
+#     name: "Octave down"
+#
+#   - low: 0
+#     high: 35
+#     from_channel: 2
+#     channel: 10
+#     name: "Low notes to drum channel"
