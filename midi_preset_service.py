@@ -514,12 +514,62 @@ class MidiPresetService:
             nm.setdefault("mask", 0)
             nm.setdefault("compare", 0)
 
+        # Resolve named polyphony instances
+        self.poly_instances = self._resolve_poly_instances()
+
         # Runtime state for the mapping engine
         self.shift_state = 0            # 16-bit bitmask
         self.joystick_states = {}       # index -> {neg_held, pos_held, latch}
         self.destination_states = {}    # "cc_ch" -> current value
         self._map_log_times = {}        # "cc_ch" -> last log timestamp (debounce)
-        self.poly_states = {}           # target_channel -> {held: [...], active: [...]}
+        self.poly_states = {}           # pool_key -> {held: [...], active: [...]}
+
+    _POLY_PARAM_KEYS = ("max_polyphony", "fallback_priority", "replace_priority")
+
+    def _resolve_poly_instances(self):
+        """Validate and collect canonical parameters for named polyphony instances.
+
+        Returns a dict mapping instance_name → {max_polyphony, fallback_priority,
+        replace_priority}.  Ranges that define an instance (have max_polyphony)
+        register it; ranges that merely join (polyphony_instance without
+        max_polyphony) are validated.  Conflicting re-definitions warn and
+        keep the first definition.
+        """
+        defs = {}  # instance_name -> canonical params
+        for nm in self.note_mappings:
+            inst = nm.get("polyphony_instance")
+            if inst is None:
+                continue
+            has_params = "max_polyphony" in nm
+            if not has_params:
+                continue
+            params = {
+                "max_polyphony": nm["max_polyphony"],
+                "fallback_priority": nm.get("fallback_priority", "most_recent"),
+                "replace_priority": nm.get("replace_priority", "lowest"),
+            }
+            if inst not in defs:
+                defs[inst] = params
+            else:
+                # Check for conflicts with existing definition
+                existing = defs[inst]
+                for key in self._POLY_PARAM_KEYS:
+                    if params[key] != existing[key]:
+                        _log("WARN",
+                             f"polyphony_instance '{inst}': "
+                             f"conflicting {key} "
+                             f"({params[key]} vs {existing[key]}), "
+                             f"using first definition")
+
+        # Warn about join-only references to undefined instances
+        for nm in self.note_mappings:
+            inst = nm.get("polyphony_instance")
+            if inst is not None and inst not in defs:
+                _log("WARN",
+                     f"polyphony_instance '{inst}' referenced but "
+                     f"never defined (no range sets max_polyphony for it)")
+
+        return defs
 
     def _presets_dir(self):
         return self.config_dir / PRESETS_SUBDIR
@@ -1019,11 +1069,11 @@ class MidiPresetService:
 
     # -- Note range mapping ---------------------------------------------------
 
-    def _get_poly_state(self, channel):
-        """Get or create polyphony state for a target channel."""
-        if channel not in self.poly_states:
-            self.poly_states[channel] = {"held": [], "active": []}
-        return self.poly_states[channel]
+    def _get_poly_state(self, key):
+        """Get or create polyphony state for a pool (instance name or channel)."""
+        if key not in self.poly_states:
+            self.poly_states[key] = {"held": [], "active": []}
+        return self.poly_states[key]
 
     def _poly_note_on(self, state, pitch, velocity, max_poly, replace_priority):
         """Process note-on through polyphony limiter.
@@ -1172,20 +1222,38 @@ class MidiPresetService:
             transpose = nm.get("transpose", 0)
             name = nm.get("name", "")
 
-            if "max_polyphony" in nm:
+            inst_name = nm.get("polyphony_instance")
+            has_poly = "max_polyphony" in nm or inst_name is not None
+
+            if has_poly:
                 # ---- Polyphony-managed note processing ----
-                state = self._get_poly_state(out_ch)
-                max_poly = nm["max_polyphony"]
+                # Resolve pool key and parameters
+                if inst_name is not None:
+                    pool_key = inst_name
+                    params = self.poly_instances.get(inst_name, {})
+                    max_poly = params.get("max_polyphony", 1)
+                    replace_pri = params.get("replace_priority", "lowest")
+                    fallback_pri = params.get(
+                        "fallback_priority", "most_recent")
+                else:
+                    # Legacy: no instance name, key by channel
+                    pool_key = out_ch
+                    max_poly = nm["max_polyphony"]
+                    replace_pri = nm.get("replace_priority", "lowest")
+                    fallback_pri = nm.get(
+                        "fallback_priority", "most_recent")
+
+                state = self._get_poly_state(pool_key)
 
                 if is_note_on:
-                    replace_pri = nm.get("replace_priority", "lowest")
                     actions = self._poly_note_on(
                         state, note, msg.velocity, max_poly, replace_pri)
                 else:
-                    fallback_pri = nm.get("fallback_priority", "most_recent")
                     actions = self._poly_note_off(
                         state, note, fallback_pri)
 
+                pool_label = (f"'{inst_name}'"
+                              if inst_name else f"ch{out_ch + 1}")
                 for action in actions:
                     if action[0] == "on":
                         out_note = action[1] + transpose
@@ -1197,7 +1265,8 @@ class MidiPresetService:
                                  f"note={action[1]}→{out_note} "
                                  f"ch{out_ch + 1} vel={action[2]} "
                                  f"\"{name}\" "
-                                 f"[{len(state['active'])}/{max_poly}]")
+                                 f"[{pool_label} "
+                                 f"{len(state['active'])}/{max_poly}]")
                     elif action[0] == "off":
                         out_note = action[1] + transpose
                         if 0 <= out_note <= 127:
@@ -1207,7 +1276,8 @@ class MidiPresetService:
                             _log("NOTE", f"poly {action[2]} "
                                  f"note={action[1]}→{out_note} "
                                  f"ch{out_ch + 1} \"{name}\" "
-                                 f"[{len(state['active'])}/{max_poly}]")
+                                 f"[{pool_label} "
+                                 f"{len(state['active'])}/{max_poly}]")
             else:
                 # ---- Simple pass-through with optional transpose/channel ----
                 out_note = note + transpose
@@ -1450,15 +1520,17 @@ class MidiPresetService:
         _log("INIT", f"CC sets      : {cc_count} mappings in {len(self.cc_sets)} set(s)")
         action_count = sum(len(v) for v in self.cc_mappings.values())
         _log("INIT", f"CC mappings  : {len(self.cc_mappings)} source CCs, {action_count} actions")
-        poly_ranges = [nm for nm in self.note_mappings if "max_polyphony" in nm]
+        poly_count = sum(1 for nm in self.note_mappings
+                        if "max_polyphony" in nm
+                        or "polyphony_instance" in nm)
         _log("INIT", f"Note mappings: {len(self.note_mappings)} range(s)"
-             + (f" ({len(poly_ranges)} with polyphony)" if poly_ranges else ""))
-        for nm in poly_ranges:
-            ch = nm.get("channel", "src")
-            _log("INIT", f"  poly ch{ch}: max={nm['max_polyphony']} "
-                 f"fallback={nm.get('fallback_priority', 'most_recent')} "
-                 f"replace={nm.get('replace_priority', 'lowest')} "
-                 f"notes {nm['low']}-{nm['high']}")
+             + (f" ({poly_count} with polyphony)" if poly_count else ""))
+        if self.poly_instances:
+            for inst_name, params in self.poly_instances.items():
+                _log("INIT", f"  poly '{inst_name}': "
+                     f"max={params['max_polyphony']} "
+                     f"fallback={params['fallback_priority']} "
+                     f"replace={params['replace_priority']}")
         _log("INIT", f"Shift CCs    : {sorted(self.shift_ccs)} | Joystick CCs: {sorted(self.joystick_ccs)}")
         tmode = "intercept" if self.intercept_mode else "passthrough"
         _log("INIT", f"Transport    : {tmode}")

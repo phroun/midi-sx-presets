@@ -311,36 +311,67 @@ cc_mappings:
 #
 # ---- Polyphony Limiter (optional) ----
 #
-# Adding max_polyphony to a range enables voice allocation.  The engine
-# tracks held/active notes per target channel, so independent ranges
-# targeting different channels maintain separate voice pools.
+# Adding max_polyphony to a range enables voice allocation.
 #
-#   max_polyphony     - max simultaneous voices (1-16)
-#   fallback_priority - when a note is released, which held-but-inactive
-#                       note to reactivate:
-#                         most_recent (default), highest, lowest
-#   replace_priority  - when polyphony is full, which active note to steal:
-#                         lowest (default), second_lowest, highest,
-#                         oldest, second_oldest, most_recent
+#   max_polyphony       - max simultaneous voices (1-16)
+#   fallback_priority   - when a note is released, which held-but-inactive
+#                         note to reactivate:
+#                           most_recent (default), highest, lowest
+#   replace_priority    - when polyphony is full, which active note to steal:
+#                           lowest (default), second_lowest, highest,
+#                           oldest, second_oldest, most_recent
+#   polyphony_instance  - shared pool name (string, optional)
 #
-# Example:
+# By default, polyphony state is tracked per target channel.  To share
+# a single voice pool across multiple ranges (even on the same channel),
+# or to give different ranges on the same channel independent pools,
+# assign a polyphony_instance name.
+#
+# The FIRST range that sets max_polyphony for a given instance defines
+# its parameters.  Subsequent ranges can join the pool by naming the
+# same instance — they don't need to repeat parameters (but if they do,
+# conflicting values will log a warning and the first definition wins).
+#
+# Example — split keyboard: mono bass + 4-voice chords, same channel:
 #
 # note_mappings:
-#   - low: 36
-#     high: 96
-#     transpose: -12
-#     name: "Octave down"
-#
 #   - low: 0
-#     high: 35
-#     from_channel: 2
-#     channel: 10
-#     name: "Low notes to drum channel"
+#     high: 48
+#     polyphony_instance: bass
+#     max_polyphony: 1
+#     fallback_priority: lowest
+#     replace_priority: most_recent
+#     channel: 3
+#     name: "Bass mono"
+#
+#   - low: 49
+#     high: 127
+#     polyphony_instance: chords
+#     max_polyphony: 4
+#     fallback_priority: most_recent
+#     replace_priority: lowest
+#     channel: 3
+#     name: "Chord poly"
+#
+# Example — two ranges feeding the same pool:
+#
+#   - low: 36
+#     high: 72
+#     polyphony_instance: lead
+#     max_polyphony: 2
+#     channel: 5
+#     name: "Lead range A"
+#
+#   - low: 73
+#     high: 96
+#     polyphony_instance: lead    # joins existing — no params needed
+#     channel: 5
+#     name: "Lead range B"
+#
+# Example — simple (no instance name, pool keyed by channel):
 #
 #   - low: 0
 #     high: 127
 #     max_polyphony: 4
-#     fallback_priority: most_recent
-#     replace_priority: lowest
 #     channel: 3
 #     name: "4-voice poly synth"
