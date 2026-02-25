@@ -135,6 +135,7 @@ class MidiPresetService:
         # Transport / mode state
         self.intercept_mode = True   # True = intercept transport for preset mgmt
         self.rec_counter = 0         # Consecutive rec presses
+        self.save_mode = False       # True = next note-on saves preset
         self.preset_cursor = None    # Current note for arrow navigation
 
         # MIDI ports (opened in run())
@@ -343,6 +344,35 @@ class MidiPresetService:
                 _log("REC", f"Switched to destination {self._dest_display(dest)}")
             else:
                 _log("WARN", "Already recording — include a dest byte to switch destination.")
+
+    def _save_preset_from_state(self, note, channel):
+        """Save the current mapping engine destination states as a preset."""
+        # Check write-protection
+        existing = self.presets.get(note, {})
+        if existing.get("read_only", False):
+            _log("DENY", f"Preset {note} is read-only — save rejected.")
+            return
+
+        preset = {
+            "name": existing.get("name", f"Preset {note}"),
+            "read_only": existing.get("read_only", False),
+            "channel": channel,
+        }
+
+        # Build cc_values from destination_states (keys are "cc_ch")
+        cc_data = {}
+        for key, value in self.destination_states.items():
+            parts = key.split("_")
+            cc_num, ch = int(parts[0]), int(parts[1])
+            name = self._cc_num_to_name(cc_num)
+            cc_data[name] = value
+
+        if cc_data:
+            preset["cc_values"] = cc_data
+
+        self.presets[note] = preset
+        self._save_preset_to_disk(note)
+        _log("SAVE", f"Preset {note} saved ({len(cc_data)} CCs from mapping state).")
 
     def _cmd_save_preset(self):
         if not self.recording:
@@ -768,7 +798,8 @@ class MidiPresetService:
                 self.load_mode = False
                 _log("LOAD", "Load mode cancelled (rec pressed).")
             self.rec_counter += 1
-            _log("TRANS", f"Rec (counter={self.rec_counter})")
+            self.save_mode = True
+            _log("SAVE", f"Save mode — press a note to save preset (counter={self.rec_counter})")
 
         elif cc == CC_PLAY:
             if self.rec_counter == 0:
@@ -783,12 +814,13 @@ class MidiPresetService:
             if self.load_mode:
                 self.load_mode = False
                 _log("LOAD", "Load mode cancelled.")
+            if self.save_mode:
+                self.save_mode = False
+                _log("SAVE", "Save mode cancelled.")
             counter = self.rec_counter
             self.rec_counter = 0
             if counter == 0:
                 return
-            # Dispatch valid counter values (to be defined)
-            # For now all nonzero counters clear without action
             _log("TRANS", f"Stop with counter={counter} — cleared")
 
         elif cc == CC_REWIND:
@@ -856,6 +888,12 @@ class MidiPresetService:
 
         # Note-on (velocity > 0)
         if msg.type == "note_on" and msg.velocity > 0:
+            if self.save_mode:
+                self.save_mode = False
+                self.rec_counter = 0
+                self.preset_cursor = msg.note
+                self._save_preset_from_state(msg.note, msg.channel)
+                return  # Intercepted
             if self.load_mode:
                 self.load_mode = False
                 self.preset_cursor = msg.note  # Track for arrow navigation
