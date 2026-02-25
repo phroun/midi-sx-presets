@@ -267,7 +267,13 @@ class MidiPresetService:
         return forward, reverse
 
     def _load_cc_mappings(self):
-        """Load cc_mappings.yaml — shift/joystick definitions and CC routing."""
+        """Load cc_mappings.yaml — shift/joystick definitions and CC routing.
+
+        Actions may use ``parameter: name`` (resolved via
+        reverse_destinations) instead of explicit ``cc:`` and
+        ``channel:``.  Resolution happens here at load time so the
+        runtime mapping path stays branchless.
+        """
         path = self.config_dir / "cc_mappings.yaml"
         if path.exists():
             data = _yaml_load(path)
@@ -276,6 +282,21 @@ class MidiPresetService:
         self.shift_defs = data.get("shift_definitions", [])
         self.joystick_defs = data.get("joystick_definitions", [])
         self.cc_mappings = data.get("cc_mappings", {})
+
+        # Resolve "parameter" shorthand → cc + channel (1-based)
+        for source_cc, actions in self.cc_mappings.items():
+            for action in actions:
+                if "parameter" not in action:
+                    continue
+                param = action.pop("parameter")
+                target = self.reverse_destinations.get(param)
+                if target is None:
+                    _log("WARN", f"CC mapping source {source_cc}: "
+                         f"parameter '{param}' not found in destinations")
+                    continue
+                ch, cc_num = target
+                action["cc"] = cc_num
+                action["channel"] = ch + 1  # store 1-based to match convention
 
         # Build lookup sets for fast detection
         self.shift_ccs = {s["cc"] for s in self.shift_defs}
