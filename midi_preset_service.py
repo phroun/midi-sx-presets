@@ -870,9 +870,7 @@ class MidiPresetService:
             if (ch, cc_num) in self.recall_ignore:
                 _log("  --", f"{key} = {value}  (ignored)")
                 continue
-            self.midi_return.send(
-                mido.Message("control_change", channel=ch, control=cc_num, value=value)
-            )
+            self._send_cc(cc_num, ch, value)
             self._set_dest(cc_num, ch, value)
             _log("  ->", f"{key} = {value}  (ch{ch + 1}/CC{cc_num})")
 
@@ -880,7 +878,9 @@ class MidiPresetService:
         """Recall a legacy preset with flat cc_values (no channel grouping)."""
         pc = preset.get("program_change")
         if pc is not None:
-            self.midi_return.send(mido.Message("program_change", channel=channel, program=pc))
+            if self.midi_out:
+                self.midi_out.send(
+                    mido.Message("program_change", channel=channel, program=pc))
             _log("  ->", f"PC {pc}")
         for cc_name, value in preset.get("cc_values", {}).items():
             cc_num = self._cc_name_to_number(cc_name)
@@ -889,9 +889,7 @@ class MidiPresetService:
             if (channel, cc_num) in self.recall_ignore:
                 _log("  --", f"{self._cc_label(cc_num, channel)} = {value}  (ignored)")
                 continue
-            self.midi_return.send(
-                mido.Message("control_change", channel=channel, control=cc_num, value=value)
-            )
+            self._send_cc(cc_num, channel, value)
             self._set_dest(cc_num, channel, value)
             _log("  ->", f"{self._cc_label(cc_num, channel)} = {value}")
 
@@ -906,9 +904,7 @@ class MidiPresetService:
                 if (ch, cc_num) in self.recall_ignore:
                     _log("  --", f"{self._cc_label(cc_num, ch)} = {value}  (ignored)")
                     continue
-                self.midi_return.send(
-                    mido.Message("control_change", channel=ch, control=cc_num, value=value)
-                )
+                self._send_cc(cc_num, ch, value)
                 self._set_dest(cc_num, ch, value)
                 _log("  ->", f"{self._cc_label(cc_num, ch)} = {value}")
 
