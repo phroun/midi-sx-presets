@@ -103,7 +103,7 @@ class MidiPresetService:
         self.config = self._load_or_create_config()
         self.cc_name_sets, self.cc_default_names = self._load_cc_names()
         self.destinations_map = self._load_destinations()
-        self.resolved_destinations = self._resolve_destinations()
+        self.resolved_destinations, self.reverse_destinations = self._resolve_destinations()
         self.presets = self._load_presets()
         self._load_cc_mappings()
 
@@ -213,15 +213,18 @@ class MidiPresetService:
           2. Apply bare integer-keyed overrides (not prefixed).
           3. Check for name conflicts within the destination.
 
-        Returns ``{dest_id: {channel: {cc_num: name}}}``.
+        Returns a tuple of two dicts:
+          forward:  ``{dest_id: {channel: {cc_num: name}}}``
+          reverse:  ``{dest_id: {name: (channel, cc_num)}}``
         Logs warnings for every conflict found.
         """
-        resolved = {}
+        forward = {}
+        reverse_all = {}
         for dest_id, dest_cfg in self.destinations_map.items():
             prefix = dest_cfg.get("prefix", "")
             channels_cfg = dest_cfg.get("channels", {})
             dest_names = {}
-            reverse = {}  # {name: (channel, cc_num)} — conflict check
+            reverse = {}  # {name: (channel, cc_num)} — conflict check + kept
 
             for ch, ch_cfg in channels_cfg.items():
                 ch = int(ch)
@@ -258,8 +261,9 @@ class MidiPresetService:
                     else:
                         reverse[name] = (ch, cc_num)
 
-            resolved[dest_id] = dest_names
-        return resolved
+            forward[dest_id] = dest_names
+            reverse_all[dest_id] = reverse
+        return forward, reverse_all
 
     def _load_cc_mappings(self):
         """Load cc_mappings.yaml — shift/joystick definitions and CC routing."""
