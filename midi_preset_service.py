@@ -142,6 +142,7 @@ class MidiPresetService:
         self.intercept_mode = True   # True = intercept transport for preset mgmt
         self.rec_counter = 0         # Consecutive rec presses
         self.preset_cursor = {}      # {channel: note} for arrow navigation
+        self._last_preset = None     # (channel, note) of most recent recall/save
 
         # Persistent state recovery
         self._state_dirty = False
@@ -189,6 +190,9 @@ class MidiPresetService:
             self.intercept_mode = bool(data["intercept_mode"])
         if "shift_state" in data:
             self.shift_state = int(data["shift_state"])
+        saved_lp = data.get("last_preset")
+        if isinstance(saved_lp, (list, tuple)) and len(saved_lp) == 2:
+            self._last_preset = (int(saved_lp[0]), int(saved_lp[1]))
         n = len(self.destination_states)
         cursor_str = ", ".join(f"ch{ch + 1}={note}"
                                for ch, note in sorted(self.preset_cursor.items()))
@@ -202,6 +206,7 @@ class MidiPresetService:
             "preset_cursor": self.preset_cursor,
             "intercept_mode": self.intercept_mode,
             "shift_state": self.shift_state,
+            "last_preset": list(self._last_preset) if self._last_preset else None,
         }
         path = self._state_path()
         tmp = path.with_suffix(".tmp")
@@ -737,10 +742,28 @@ class MidiPresetService:
 
         self.presets.setdefault(channel, {})[note] = preset
         self._save_preset_to_disk(channel, note)
+        self._last_preset = (channel, note)
         unknown_count = sum(len(ccs) for ccs in unknown_channels.values())
         total = named_count + unknown_count
         _log("SAVE", f"Preset ch{channel + 1}/{note} saved ({total} CCs: "
              f"{named_count} named, {unknown_count} in channels).")
+
+    def _set_write_protect(self, locked):
+        """Enable or disable write-protection on the most recently used preset."""
+        if self._last_preset is None:
+            _log("WARN", "No last preset to protect.")
+            return
+        ch, note = self._last_preset
+        bank = self.presets.get(ch, {})
+        preset = bank.get(note)
+        if preset is None:
+            _log("WARN", f"Preset ch{ch + 1}/{note} not found.")
+            return
+        preset["read_only"] = locked
+        self._save_preset_to_disk(ch, note)
+        state = "LOCKED" if locked else "UNLOCKED"
+        name = preset.get("name", f"ch{ch + 1}/{note}")
+        _log("PROTECT", f"{name} — {state}")
 
     def _cmd_load_preset(self):
         self.load_mode = True
@@ -837,6 +860,8 @@ class MidiPresetService:
         if preset is None:
             _log("WARN", f"No preset stored for ch{channel + 1}/{note}.")
             return
+
+        self._last_preset = (channel, note)
 
         name = preset.get("name", "")
         _log("RECALL", f"Preset ch{channel + 1}/{note}: \"{name}\"")
@@ -1478,9 +1503,12 @@ class MidiPresetService:
         *channel* (0-based) selects the preset bank for arrow navigation.
 
         Rec×1 + note  → save preset to that note (bank chosen by note channel)
-        Play          → load mode (next note recalls preset)
+        Rec×1 + Play  → save into most recently loaded/saved preset
         Rec×3 + Stop  → switch to pass-through mode
         Rec×3 + Play  → switch to pass-through mode
+        Rec×6 + Play  → disable write-protect on last preset
+        Rec×6 + Stop  → enable write-protect on last preset
+        Play          → load mode (next note recalls preset)
         Stop          → cancel any pending mode
         """
         if cc == CC_REC:
@@ -1489,42 +1517,56 @@ class MidiPresetService:
                 _log("LOAD", "Load mode cancelled (rec pressed).")
             self.rec_counter += 1
             if self.rec_counter == 1:
-                _log("SAVE", "Rec×1 — press a note to save preset")
-            elif self.rec_counter >= 3:
-                _log("TRANS", f"Rec×{self.rec_counter} — press Stop or Play for pass-through")
+                _log("SAVE", "Rec×1 — press a note to save, or Play to save to last preset")
+            elif self.rec_counter == 3:
+                _log("TRANS", "Rec×3 — press Stop or Play for pass-through")
+            elif self.rec_counter == 6:
+                _log("TRANS", "Rec×6 — Play=unlock / Stop=lock last preset")
             else:
                 _log("TRANS", f"Rec (counter={self.rec_counter})")
 
         elif cc == CC_PLAY:
-            if self.rec_counter >= 3:
-                self.rec_counter = 0
+            counter = self.rec_counter
+            self.rec_counter = 0
+            if counter == 3:
                 self.intercept_mode = False
                 self._mark_dirty()
                 _log("MODE", "Switched to PASS-THROUGH mode")
-            elif self.rec_counter == 0:
+            elif counter == 6:
+                self._set_write_protect(False)
+            elif counter == 1:
+                if self._last_preset:
+                    ch, note = self._last_preset
+                    self.preset_cursor[ch] = note
+                    self._mark_dirty()
+                    self._save_preset_from_state(note, ch)
+                else:
+                    _log("WARN", "No last preset — press a note instead")
+            elif counter == 0:
                 self.load_mode = True
                 _log("LOAD", "Direct load — send a note-on to select the preset.")
-            else:
-                self.rec_counter = 0
-                _log("TRANS", "Play — counter cleared")
 
         elif cc == CC_STOP:
-            if self.rec_counter >= 3:
-                self.rec_counter = 0
+            counter = self.rec_counter
+            self.rec_counter = 0
+            if counter == 3:
                 self.intercept_mode = False
                 self._mark_dirty()
                 _log("MODE", "Switched to PASS-THROUGH mode")
-                return
-            if self.load_mode:
-                self.load_mode = False
-                _log("LOAD", "Load mode cancelled.")
-            self.rec_counter = 0
+            elif counter == 6:
+                self._set_write_protect(True)
+            else:
+                if self.load_mode:
+                    self.load_mode = False
+                    _log("LOAD", "Load mode cancelled.")
 
         elif cc == CC_REWIND:
+            self.rec_counter = 0
             self.load_mode = False
             self._navigate_preset(channel, -1)
 
         elif cc == CC_FORWARD:
+            self.rec_counter = 0
             self.load_mode = False
             self._navigate_preset(channel, 1)
 
@@ -1536,15 +1578,15 @@ class MidiPresetService:
         """
         if cc == CC_REC:
             self.rec_counter += 1
-            if self.rec_counter >= 3:
-                _log("TRANS", f"Rec×{self.rec_counter} — press Stop or Play to enter intercept")
+            if self.rec_counter == 3:
+                _log("TRANS", "Rec×3 — press Stop or Play to enter intercept")
             else:
                 _log("TRANS", f"Rec (counter={self.rec_counter})")
 
         elif cc == CC_PLAY:
             counter = self.rec_counter
             self.rec_counter = 0
-            if counter >= 3:
+            if counter == 3:
                 self.intercept_mode = True
                 self._mark_dirty()
                 _log("MODE", "Switched to INTERCEPT mode")
@@ -1553,7 +1595,7 @@ class MidiPresetService:
         elif cc == CC_STOP:
             counter = self.rec_counter
             self.rec_counter = 0
-            if counter >= 3:
+            if counter == 3:
                 self.intercept_mode = True
                 self._mark_dirty()
                 _log("MODE", "Switched to INTERCEPT mode")
@@ -1608,6 +1650,8 @@ class MidiPresetService:
                 self._mark_dirty()
                 self._save_preset_from_state(msg.note, msg.channel)
                 return  # Intercepted
+            if self.rec_counter > 0:
+                self.rec_counter = 0  # Any other count — cancel
             if self.load_mode:
                 self.load_mode = False
                 self.preset_cursor[msg.channel] = msg.note
