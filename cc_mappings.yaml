@@ -309,13 +309,25 @@ cc_mappings:
 # Notes that match at least one range are forwarded (possibly modified).
 # Notes that match NO ranges are passed through unchanged.
 #
+# ---- Polyphony Limiter (optional) ----
+#
+# Adding max_polyphony to a range enables voice allocation.  The engine
+# tracks held/active notes per target channel, so independent ranges
+# targeting different channels maintain separate voice pools.
+#
+#   max_polyphony     - max simultaneous voices (1-16)
+#   fallback_priority - when a note is released, which held-but-inactive
+#                       note to reactivate:
+#                         most_recent (default), highest, lowest
+#   replace_priority  - when polyphony is full, which active note to steal:
+#                         lowest (default), second_lowest, highest,
+#                         oldest, second_oldest, most_recent
+#
 # Example:
 #
 # note_mappings:
 #   - low: 36
 #     high: 96
-#     mask: 0
-#     compare: 0
 #     transpose: -12
 #     name: "Octave down"
 #
@@ -324,3 +336,11 @@ cc_mappings:
 #     from_channel: 2
 #     channel: 10
 #     name: "Low notes to drum channel"
+#
+#   - low: 0
+#     high: 127
+#     max_polyphony: 4
+#     fallback_priority: most_recent
+#     replace_priority: lowest
+#     channel: 3
+#     name: "4-voice poly synth"

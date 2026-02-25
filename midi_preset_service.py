@@ -519,6 +519,7 @@ class MidiPresetService:
         self.joystick_states = {}       # index -> {neg_held, pos_held, latch}
         self.destination_states = {}    # "cc_ch" -> current value
         self._map_log_times = {}        # "cc_ch" -> last log timestamp (debounce)
+        self.poly_states = {}           # target_channel -> {held: [...], active: [...]}
 
     def _presets_dir(self):
         return self.config_dir / PRESETS_SUBDIR
@@ -1018,6 +1019,122 @@ class MidiPresetService:
 
     # -- Note range mapping ---------------------------------------------------
 
+    def _get_poly_state(self, channel):
+        """Get or create polyphony state for a target channel."""
+        if channel not in self.poly_states:
+            self.poly_states[channel] = {"held": [], "active": []}
+        return self.poly_states[channel]
+
+    def _poly_note_on(self, state, pitch, velocity, max_poly, replace_priority):
+        """Process note-on through polyphony limiter.
+
+        Tracks notes by their original (pre-transpose) pitch.
+        Returns a list of action tuples:
+          ("on", pitch, velocity, reason)  or  ("off", pitch, reason)
+        where reason is one of: "new", "retrigger", "replace", "steal".
+        """
+        now = time.monotonic()
+        note_info = {"pitch": pitch, "velocity": velocity, "timestamp": now}
+
+        # Update held-notes list
+        state["held"] = [n for n in state["held"] if n["pitch"] != pitch]
+        state["held"].append(note_info)
+
+        results = []
+
+        # Already active → retrigger (update timestamp/velocity, re-send)
+        if any(n["pitch"] == pitch for n in state["active"]):
+            state["active"] = [n for n in state["active"]
+                               if n["pitch"] != pitch]
+            state["active"].append(note_info)
+            results.append(("on", pitch, velocity, "retrigger"))
+            return results
+
+        # Room available → just add
+        if len(state["active"]) < max_poly:
+            state["active"].append(note_info)
+            results.append(("on", pitch, velocity, "new"))
+            return results
+
+        # Polyphony full → steal a voice
+        to_replace = self._select_replace(state["active"], replace_priority)
+        if to_replace is not None:
+            results.append(("off", to_replace["pitch"], "steal"))
+            state["active"] = [n for n in state["active"]
+                               if n["pitch"] != to_replace["pitch"]]
+            state["active"].append(note_info)
+            results.append(("on", pitch, velocity, "replace"))
+
+        return results
+
+    def _poly_note_off(self, state, pitch, fallback_priority):
+        """Process note-off through polyphony limiter.
+
+        Returns a list of action tuples (same format as _poly_note_on).
+        """
+        # Remove from held
+        state["held"] = [n for n in state["held"] if n["pitch"] != pitch]
+
+        results = []
+
+        # Only act if this note is currently active
+        if not any(n["pitch"] == pitch for n in state["active"]):
+            return results
+
+        results.append(("off", pitch, "release"))
+        state["active"] = [n for n in state["active"]
+                           if n["pitch"] != pitch]
+
+        # Try to activate a held-but-inactive note as fallback
+        fallback = self._select_fallback(
+            state["held"], state["active"], fallback_priority)
+        if fallback is not None:
+            state["active"].append(fallback)
+            results.append(("on", fallback["pitch"],
+                            fallback["velocity"], "fallback"))
+
+        return results
+
+    @staticmethod
+    def _select_replace(active, priority):
+        """Choose which active note to steal based on replace_priority."""
+        if not active:
+            return None
+        if priority == "lowest":
+            return min(active, key=lambda n: n["pitch"])
+        if priority == "second_lowest":
+            if len(active) < 2:
+                return active[0]
+            by_pitch = sorted(active, key=lambda n: n["pitch"])
+            return by_pitch[1]
+        if priority == "highest":
+            return max(active, key=lambda n: n["pitch"])
+        if priority == "oldest":
+            return min(active, key=lambda n: n["timestamp"])
+        if priority == "second_oldest":
+            if len(active) < 2:
+                return active[0]
+            by_time = sorted(active, key=lambda n: n["timestamp"])
+            return by_time[1]
+        if priority == "most_recent":
+            return max(active, key=lambda n: n["timestamp"])
+        return active[0]
+
+    @staticmethod
+    def _select_fallback(held, active, priority):
+        """Choose which held-but-inactive note to reactivate."""
+        active_pitches = {n["pitch"] for n in active}
+        available = [n for n in held if n["pitch"] not in active_pitches]
+        if not available:
+            return None
+        if priority == "most_recent":
+            return max(available, key=lambda n: n["timestamp"])
+        if priority == "highest":
+            return max(available, key=lambda n: n["pitch"])
+        if priority == "lowest":
+            return min(available, key=lambda n: n["pitch"])
+        return available[-1]  # fallback: most recently added
+
     def _process_note_mapping(self, msg):
         """Run a note message through the note range mapping table.
 
@@ -1031,6 +1148,7 @@ class MidiPresetService:
 
         note = msg.note
         src_ch_1based = msg.channel + 1
+        is_note_on = msg.type == "note_on" and msg.velocity > 0
         results = []
         matched = False
 
@@ -1050,40 +1168,69 @@ class MidiPresetService:
 
             matched = True
 
-            # Start with the original note and channel
-            out_note = note
-            out_ch = msg.channel  # 0-based
+            out_ch = (nm["channel"] - 1) if "channel" in nm else msg.channel
+            transpose = nm.get("transpose", 0)
+            name = nm.get("name", "")
 
-            # Apply transpose
-            if "transpose" in nm:
-                out_note = note + nm["transpose"]
+            if "max_polyphony" in nm:
+                # ---- Polyphony-managed note processing ----
+                state = self._get_poly_state(out_ch)
+                max_poly = nm["max_polyphony"]
+
+                if is_note_on:
+                    replace_pri = nm.get("replace_priority", "lowest")
+                    actions = self._poly_note_on(
+                        state, note, msg.velocity, max_poly, replace_pri)
+                else:
+                    fallback_pri = nm.get("fallback_priority", "most_recent")
+                    actions = self._poly_note_off(
+                        state, note, fallback_pri)
+
+                for action in actions:
+                    if action[0] == "on":
+                        out_note = action[1] + transpose
+                        if 0 <= out_note <= 127:
+                            results.append(mido.Message(
+                                "note_on", note=out_note, channel=out_ch,
+                                velocity=action[2]))
+                            _log("NOTE", f"poly {action[3]} "
+                                 f"note={action[1]}→{out_note} "
+                                 f"ch{out_ch + 1} vel={action[2]} "
+                                 f"\"{name}\" "
+                                 f"[{len(state['active'])}/{max_poly}]")
+                    elif action[0] == "off":
+                        out_note = action[1] + transpose
+                        if 0 <= out_note <= 127:
+                            results.append(mido.Message(
+                                "note_off", note=out_note, channel=out_ch,
+                                velocity=0))
+                            _log("NOTE", f"poly {action[2]} "
+                                 f"note={action[1]}→{out_note} "
+                                 f"ch{out_ch + 1} \"{name}\" "
+                                 f"[{len(state['active'])}/{max_poly}]")
+            else:
+                # ---- Simple pass-through with optional transpose/channel ----
+                out_note = note + transpose
                 if out_note < 0 or out_note > 127:
-                    # Transposed out of range — skip this action
-                    name = nm.get("name", "")
                     _log("NOTE", f"note {note} ch{src_ch_1based} "
-                         f"transpose {nm['transpose']:+d} → {out_note} "
+                         f"transpose {transpose:+d} → {out_note} "
                          f"out of range, skipped \"{name}\"")
                     continue
 
-            # Apply channel override (YAML is 1-based)
-            if "channel" in nm:
-                out_ch = nm["channel"] - 1
+                out_msg = msg.copy(note=out_note, channel=out_ch)
+                results.append(out_msg)
 
-            out_msg = msg.copy(note=out_note, channel=out_ch)
-            results.append(out_msg)
-
-            # Debug logging
-            name = nm.get("name", "")
-            changes = []
-            if out_note != note:
-                changes.append(f"note {note}→{out_note}")
-            if out_ch != msg.channel:
-                changes.append(f"ch{src_ch_1based}→{out_ch + 1}")
-            detail = ", ".join(changes) if changes else "no change"
-            line = (f"{msg.type} note={note} ch{src_ch_1based} "
-                    f"(shift=0x{self.shift_state:04X}) → "
-                    f"{detail} \"{name}\"")
-            _log("NOTE", line)
+                # Debug logging
+                changes = []
+                if out_note != note:
+                    changes.append(f"note {note}→{out_note}")
+                if out_ch != msg.channel:
+                    changes.append(f"ch{src_ch_1based}→{out_ch + 1}")
+                detail = ", ".join(changes) if changes else "no change"
+                line = (f"{msg.type} note={note} ch{src_ch_1based} "
+                        f"(shift=0x{self.shift_state:04X}) → "
+                        f"{detail} \"{name}\"")
+                _log("NOTE", line)
 
         if not matched:
             return None
@@ -1303,7 +1450,15 @@ class MidiPresetService:
         _log("INIT", f"CC sets      : {cc_count} mappings in {len(self.cc_sets)} set(s)")
         action_count = sum(len(v) for v in self.cc_mappings.values())
         _log("INIT", f"CC mappings  : {len(self.cc_mappings)} source CCs, {action_count} actions")
-        _log("INIT", f"Note mappings: {len(self.note_mappings)} range(s)")
+        poly_ranges = [nm for nm in self.note_mappings if "max_polyphony" in nm]
+        _log("INIT", f"Note mappings: {len(self.note_mappings)} range(s)"
+             + (f" ({len(poly_ranges)} with polyphony)" if poly_ranges else ""))
+        for nm in poly_ranges:
+            ch = nm.get("channel", "src")
+            _log("INIT", f"  poly ch{ch}: max={nm['max_polyphony']} "
+                 f"fallback={nm.get('fallback_priority', 'most_recent')} "
+                 f"replace={nm.get('replace_priority', 'lowest')} "
+                 f"notes {nm['low']}-{nm['high']}")
         _log("INIT", f"Shift CCs    : {sorted(self.shift_ccs)} | Joystick CCs: {sorted(self.joystick_ccs)}")
         tmode = "intercept" if self.intercept_mode else "passthrough"
         _log("INIT", f"Transport    : {tmode}")
