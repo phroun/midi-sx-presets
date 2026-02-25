@@ -540,6 +540,7 @@ class MidiPresetService:
         self.destination_states = {}    # "cc_ch" -> current value
         self._map_log_times = {}        # "cc_ch" -> last log timestamp (debounce)
         self.poly_states = {}           # pool_key -> {held: [...], active: [...]}
+        self.note_on_origins = {}       # (ch0, note) -> origin info for note-off routing
         self._center_trackers = {}      # dest_key -> center-snap wiggle state
         self._center_timers = {}        # dest_key -> threading.Timer for idle detect
 
@@ -1381,6 +1382,73 @@ class MidiPresetService:
             return min(available, key=lambda n: n["pitch"])
         return available[-1]  # fallback: most recently added
 
+    def _process_poly_actions(self, actions, name, pool_label, state, max_poly):
+        """Convert polyphony actions to MIDI messages with logging."""
+        results = []
+        for action in actions:
+            if action[0] == "on":
+                # action: ("on", pitch, vel, reason, transpose, out_ch)
+                a_transpose = action[4]
+                a_out_ch = action[5]
+                out_note = action[1] + a_transpose
+                if 0 <= out_note <= 127:
+                    results.append(mido.Message(
+                        "note_on", note=out_note, channel=a_out_ch,
+                        velocity=action[2]))
+                    _log("NOTE", f"poly {action[3]} "
+                         f"note={action[1]}→{out_note} "
+                         f"ch{a_out_ch + 1} vel={action[2]} "
+                         f"\"{name}\" "
+                         f"[{pool_label} "
+                         f"{len(state['active'])}/{max_poly}]")
+            elif action[0] == "off":
+                # action: ("off", pitch, reason, transpose, out_ch)
+                a_transpose = action[3]
+                a_out_ch = action[4]
+                out_note = action[1] + a_transpose
+                if 0 <= out_note <= 127:
+                    results.append(mido.Message(
+                        "note_off", note=out_note, channel=a_out_ch,
+                        velocity=0))
+                    _log("NOTE", f"poly {action[2]} "
+                         f"note={action[1]}→{out_note} "
+                         f"ch{a_out_ch + 1} \"{name}\" "
+                         f"[{pool_label} "
+                         f"{len(state['active'])}/{max_poly}]")
+        return results
+
+    def _release_tracked_notes(self, pitch, origins):
+        """Release notes using stored mapping info from the original note-on.
+
+        Called when a note-off arrives and we have tracked origin info,
+        ensuring the release reaches the correct mapping even if shift
+        state changed while the key was held.
+        """
+        results = []
+        for info in origins:
+            if info["has_poly"]:
+                state = self._get_poly_state(info["pool_key"])
+                actions = self._poly_note_off(
+                    state, pitch, info["fallback_pri"],
+                    info["transpose"], info["out_ch"])
+                pool_label = (f"'{info['inst_name']}'"
+                              if info.get("inst_name")
+                              else f"ch{info['out_ch'] + 1}")
+                results.extend(self._process_poly_actions(
+                    actions, info["name"], pool_label,
+                    state, info["max_poly"]))
+            else:
+                out_note = pitch + info["transpose"]
+                if 0 <= out_note <= 127:
+                    results.append(mido.Message(
+                        "note_off", note=out_note,
+                        channel=info["out_ch"], velocity=0))
+                    _log("NOTE", f"tracked release "
+                         f"note={pitch}→{out_note} "
+                         f"ch{info['out_ch'] + 1} "
+                         f"\"{info['name']}\"")
+        return results
+
     def _process_note_mapping(self, msg):
         """Run a note message through the note range mapping table.
 
@@ -1395,8 +1463,18 @@ class MidiPresetService:
         note = msg.note
         src_ch_1based = msg.channel + 1
         is_note_on = msg.type == "note_on" and msg.velocity > 0
+
+        # --- Note-off: use stored origin info when available ---
+        # This ensures the release reaches the correct mapping even if
+        # shift state changed while the key was held.
+        if not is_note_on:
+            stored = self.note_on_origins.pop((msg.channel, note), None)
+            if stored is not None:
+                return self._release_tracked_notes(note, stored)
+
         results = []
         matched = False
+        origins = []  # track which mappings this note-on matched
 
         for nm in self.note_mappings:
             # Range check (inclusive)
@@ -1445,42 +1523,25 @@ class MidiPresetService:
                     actions = self._poly_note_on(
                         state, note, msg.velocity, max_poly, replace_pri,
                         transpose, out_ch)
+                    # Track origin for later note-off routing
+                    origins.append({
+                        "has_poly": True,
+                        "pool_key": pool_key,
+                        "fallback_pri": fallback_pri,
+                        "max_poly": max_poly,
+                        "transpose": transpose,
+                        "out_ch": out_ch,
+                        "name": name,
+                        "inst_name": inst_name,
+                    })
                 else:
                     actions = self._poly_note_off(
                         state, note, fallback_pri, transpose, out_ch)
 
                 pool_label = (f"'{inst_name}'"
                               if inst_name else f"ch{out_ch + 1}")
-                for action in actions:
-                    if action[0] == "on":
-                        # action: ("on", pitch, vel, reason, transpose, out_ch)
-                        a_transpose = action[4]
-                        a_out_ch = action[5]
-                        out_note = action[1] + a_transpose
-                        if 0 <= out_note <= 127:
-                            results.append(mido.Message(
-                                "note_on", note=out_note, channel=a_out_ch,
-                                velocity=action[2]))
-                            _log("NOTE", f"poly {action[3]} "
-                                 f"note={action[1]}→{out_note} "
-                                 f"ch{a_out_ch + 1} vel={action[2]} "
-                                 f"\"{name}\" "
-                                 f"[{pool_label} "
-                                 f"{len(state['active'])}/{max_poly}]")
-                    elif action[0] == "off":
-                        # action: ("off", pitch, reason, transpose, out_ch)
-                        a_transpose = action[3]
-                        a_out_ch = action[4]
-                        out_note = action[1] + a_transpose
-                        if 0 <= out_note <= 127:
-                            results.append(mido.Message(
-                                "note_off", note=out_note, channel=a_out_ch,
-                                velocity=0))
-                            _log("NOTE", f"poly {action[2]} "
-                                 f"note={action[1]}→{out_note} "
-                                 f"ch{a_out_ch + 1} \"{name}\" "
-                                 f"[{pool_label} "
-                                 f"{len(state['active'])}/{max_poly}]")
+                results.extend(self._process_poly_actions(
+                    actions, name, pool_label, state, max_poly))
             else:
                 # ---- Simple pass-through with optional transpose/channel ----
                 out_note = note + transpose
@@ -1493,6 +1554,15 @@ class MidiPresetService:
                 out_msg = msg.copy(note=out_note, channel=out_ch)
                 results.append(out_msg)
 
+                # Track origin for later note-off routing
+                if is_note_on:
+                    origins.append({
+                        "has_poly": False,
+                        "transpose": transpose,
+                        "out_ch": out_ch,
+                        "name": name,
+                    })
+
                 # Debug logging
                 changes = []
                 if out_note != note:
@@ -1504,6 +1574,11 @@ class MidiPresetService:
                         f"(shift=0x{self.shift_state:04X}) → "
                         f"{detail} \"{name}\"")
                 _log("NOTE", line)
+
+        # Store origin info so note-off can find the right mapping
+        # even if shift state changes while the key is held.
+        if is_note_on and origins:
+            self.note_on_origins[(msg.channel, note)] = origins
 
         if not matched:
             return None
