@@ -513,6 +513,12 @@ class MidiPresetService:
         for nm in self.note_mappings:
             nm.setdefault("mask", 0)
             nm.setdefault("compare", 0)
+            # monophonic shorthand → max_polyphony: 1 + optional instance
+            mono = nm.pop("monophonic", None)
+            if mono is not None and "max_polyphony" not in nm:
+                nm["max_polyphony"] = 1
+                if isinstance(mono, str) and "polyphony_instance" not in nm:
+                    nm["polyphony_instance"] = mono
 
         # Resolve named polyphony instances
         self.poly_instances = self._resolve_poly_instances()

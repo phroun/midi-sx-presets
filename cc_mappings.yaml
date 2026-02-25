@@ -321,6 +321,9 @@ cc_mappings:
 #                           lowest (default), second_lowest, highest,
 #                           oldest, second_oldest, most_recent
 #   polyphony_instance  - shared pool name (string, optional)
+#   monophonic          - shorthand for max_polyphony: 1.
+#                         Use "monophonic: true" for anonymous mono, or
+#                         "monophonic: bass" to also set polyphony_instance.
 #
 # By default, polyphony state is tracked per target channel.  To share
 # a single voice pool across multiple ranges (even on the same channel),
@@ -337,8 +340,7 @@ cc_mappings:
 # note_mappings:
 #   - low: 0
 #     high: 48
-#     polyphony_instance: bass
-#     max_polyphony: 1
+#     monophonic: bass          # shorthand for max_polyphony: 1 + instance
 #     fallback_priority: lowest
 #     replace_priority: most_recent
 #     channel: 3
