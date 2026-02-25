@@ -176,25 +176,30 @@ class MidiPresetService:
         _yaml_dump({"cc_names": default_names}, path)
         return {"default": default_names}, default_names
 
-    _DEST_RESERVED_KEYS = {"prefix", "cc_group", "channels"}
+    _DEST_RESERVED_KEYS = {"prefix", "channels"}
+    _CH_RESERVED_KEYS   = {"cc_group"}
 
     def _load_destinations(self):
         """Load the optional destinations map (destinations.yaml).
 
-        Each top-level key is a destination identifier.  Inside each
-        destination, reserved keys are ``prefix``, ``cc_group``, and
-        ``channels``; any other integer key is a CC override::
+        Each top-level key is a destination identifier.  Reserved keys
+        inside a destination are ``prefix`` and ``channels``.
+        ``channels`` is a dict keyed by MIDI channel number; inside each
+        channel ``cc_group`` is reserved and any bare integer key is a
+        CC override::
 
             nerdseq:
               prefix: ns
-              cc_group: polysynth_ccs
-              channels: [0, 1]
-              85: nerdseq_perf_out
+              channels:
+                0:
+                  cc_group: mix_ccs
+                  85: nerdseq_perf_out
+                1:
+                  cc_group: polysynth_ccs
         """
         path = self.config_dir / DESTINATIONS_FILENAME
         if path.exists():
             data = _yaml_load(path)
-            # Filter out comment-only / empty files
             if isinstance(data, dict):
                 return {k: v for k, v in data.items()
                         if isinstance(v, dict)}
@@ -203,11 +208,10 @@ class MidiPresetService:
     def _resolve_destinations(self):
         """Resolve destination channel CC names from cc_name_sets.
 
-        For each destination:
-          1. Inherit from the named cc_group (names prefixed).
+        For each destination channel:
+          1. Inherit from the channel's cc_group (names prefixed).
           2. Apply bare integer-keyed overrides (not prefixed).
-          3. Replicate the resulting name set across all channels.
-          4. Check for name conflicts within the destination.
+          3. Check for name conflicts within the destination.
 
         Returns ``{dest_id: {channel: {cc_num: name}}}``.
         Logs warnings for every conflict found.
@@ -215,32 +219,34 @@ class MidiPresetService:
         resolved = {}
         for dest_id, dest_cfg in self.destinations_map.items():
             prefix = dest_cfg.get("prefix", "")
-            group_name = dest_cfg.get("cc_group")
-            channels = dest_cfg.get("channels", [])
-
-            # 1) Inherit from cc_group, prefixed
-            cc_names = {}
-            if group_name and group_name in self.cc_name_sets:
-                for cc_num, raw_name in self.cc_name_sets[group_name].items():
-                    cc_names[int(cc_num)] = f"{prefix}_{raw_name}" if prefix else raw_name
-
-            # 2) Apply bare integer-keyed overrides (not prefixed)
-            for key, value in dest_cfg.items():
-                if key not in self._DEST_RESERVED_KEYS:
-                    try:
-                        cc_num = int(key)
-                        cc_names[cc_num] = str(value)
-                    except (ValueError, TypeError):
-                        pass
-
-            # 3) Replicate across channels
+            channels_cfg = dest_cfg.get("channels", {})
             dest_names = {}
-            for ch in channels:
-                dest_names[int(ch)] = dict(cc_names)
+            reverse = {}  # {name: (channel, cc_num)} — conflict check
 
-            # 4) Conflict detection — same name, different (channel, cc)
-            reverse = {}
-            for ch, ch_names in dest_names.items():
+            for ch, ch_cfg in channels_cfg.items():
+                ch = int(ch)
+                ch_names = {}
+                if not isinstance(ch_cfg, dict):
+                    ch_cfg = {}
+
+                # 1) Inherit from cc_group, prefixed
+                group_name = ch_cfg.get("cc_group")
+                if group_name and group_name in self.cc_name_sets:
+                    for cc_num, raw_name in self.cc_name_sets[group_name].items():
+                        ch_names[int(cc_num)] = f"{prefix}_{raw_name}" if prefix else raw_name
+
+                # 2) Bare integer keys are CC overrides (not prefixed)
+                for key, value in ch_cfg.items():
+                    if key not in self._CH_RESERVED_KEYS:
+                        try:
+                            cc_num = int(key)
+                            ch_names[cc_num] = str(value)
+                        except (ValueError, TypeError):
+                            pass
+
+                dest_names[ch] = ch_names
+
+                # 3) Conflict detection within this destination
                 for cc_num, name in ch_names.items():
                     prev = reverse.get(name)
                     if prev is not None and prev != (ch, cc_num):
@@ -916,17 +922,21 @@ class MidiPresetService:
             _log("INIT", f"Destinations : {dest_count} configured")
             for dest_id, dest_cfg in self.destinations_map.items():
                 prefix = dest_cfg.get("prefix", "")
-                group = dest_cfg.get("cc_group", "-")
-                channels = dest_cfg.get("channels", [])
-                overrides = {k for k in dest_cfg
-                             if k not in self._DEST_RESERVED_KEYS
-                             and isinstance(k, int)}
+                channels_cfg = dest_cfg.get("channels", {})
+                ch_list = sorted(int(c) for c in channels_cfg)
+                _log("INIT", f"  {dest_id}: prefix='{prefix}', channels={ch_list}")
                 resolved_chs = self.resolved_destinations.get(dest_id, {})
-                n_names = len(next(iter(resolved_chs.values()), {}))
-                parts = f"prefix='{prefix}', group={group}, ch={list(channels)}, {n_names} names"
-                if overrides:
-                    parts += f" ({len(overrides)} override(s))"
-                _log("INIT", f"  {dest_id}: {parts}")
+                for ch in ch_list:
+                    ch_cfg = channels_cfg.get(ch, channels_cfg.get(str(ch), {}))
+                    group = ch_cfg.get("cc_group", "-") if isinstance(ch_cfg, dict) else "-"
+                    n_overrides = sum(1 for k in (ch_cfg if isinstance(ch_cfg, dict) else {})
+                                      if k not in self._CH_RESERVED_KEYS
+                                      and isinstance(k, int))
+                    n_resolved = len(resolved_chs.get(ch, {}))
+                    parts = f"group={group}, {n_resolved} names"
+                    if n_overrides:
+                        parts += f" ({n_overrides} override(s))"
+                    _log("INIT", f"    ch {ch}: {parts}")
 
         print()
         mid = self.manufacturer_id
