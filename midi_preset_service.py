@@ -1075,9 +1075,9 @@ class MidiPresetService:
             self._send_cc(target_cc, target_ch, output)
 
             # Debug: show mapping result (debounced)
-            name = (action.get("name")
-                    or self.resolved_destinations.get(
-                        (target_ch, target_cc), ""))
+            name = (self.resolved_destinations.get(
+                        (target_ch, target_cc))
+                    or action.get("name", ""))
             dest_key = self._dest_key(target_cc, target_ch)
             line = (f"CC{source_cc} ch{src_ch_1based} "
                     f"(shift=0x{self.shift_state:04X}) → "
