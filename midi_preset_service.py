@@ -358,16 +358,17 @@ class MidiPresetService:
             "channel": channel,
         }
 
-        # Build cc_values from destination_states (keys are "cc_ch")
-        cc_data = {}
+        # Build channels dict from destination_states (keys are "cc_ch")
+        channels = {}
         for key, value in self.destination_states.items():
             parts = key.split("_")
             cc_num, ch = int(parts[0]), int(parts[1])
             name = self._cc_num_to_name(cc_num)
-            cc_data[name] = value
+            ch_data = channels.setdefault(ch, {})
+            ch_data[name] = value
 
-        if cc_data:
-            preset["cc_values"] = cc_data
+        if channels:
+            preset["channels"] = {ch: {"cc_values": ccs} for ch, ccs in channels.items()}
 
         self.presets[note] = preset
         self._save_preset_to_disk(note)
@@ -541,7 +542,10 @@ class MidiPresetService:
 
         if "destinations" in preset:
             self._recall_multi_dest(preset, channel)
+        elif "channels" in preset:
+            self._recall_channeled(preset)
         else:
+            # Legacy flat format — all CCs on one channel
             self._recall_single(preset, channel)
 
         # Send preset name back via SysEx
@@ -552,7 +556,7 @@ class MidiPresetService:
             _log("  ->", f"Name: \"{name}\"")
 
     def _recall_single(self, preset, channel):
-        """Recall a preset that has no destination grouping."""
+        """Recall a legacy preset with flat cc_values (no channel grouping)."""
         pc = preset.get("program_change")
         if pc is not None:
             self.midi_return.send(mido.Message("program_change", channel=channel, program=pc))
@@ -565,8 +569,23 @@ class MidiPresetService:
             self.midi_return.send(
                 mido.Message("control_change", channel=channel, control=cc_num, value=value)
             )
-            self._set_dest(cc_num, channel, value)  # Sync mapping engine state
-            _log("  ->", f"CC {cc_name}({cc_num}) = {value}")
+            self._set_dest(cc_num, channel, value)
+            _log("  ->", f"CC {cc_name}({cc_num}) ch{channel + 1} = {value}")
+
+    def _recall_channeled(self, preset):
+        """Recall a preset with CCs grouped by channel."""
+        for ch_str, ch_data in preset["channels"].items():
+            ch = int(ch_str)  # YAML may store as string
+            for cc_name, value in ch_data.get("cc_values", {}).items():
+                cc_num = self._cc_name_to_number(cc_name)
+                if cc_num is None:
+                    _log("WARN", f"Cannot resolve CC '{cc_name}' — skipping.")
+                    continue
+                self.midi_return.send(
+                    mido.Message("control_change", channel=ch, control=cc_num, value=value)
+                )
+                self._set_dest(cc_num, ch, value)
+                _log("  ->", f"CC {cc_name}({cc_num}) ch{ch + 1} = {value}")
 
     def _recall_multi_dest(self, preset, channel):
         """Recall a preset with destination grouping, sending SysEx markers."""
@@ -592,7 +611,7 @@ class MidiPresetService:
                 self.midi_return.send(
                     mido.Message("control_change", channel=channel, control=cc_num, value=value)
                 )
-                self._set_dest(cc_num, channel, value)  # Sync mapping engine state
+                self._set_dest(cc_num, channel, value)
                 _log("  ->", f"  CC {cc_name}({cc_num}) = {value}")
 
     # -- CC Mapping Engine ----------------------------------------------------
