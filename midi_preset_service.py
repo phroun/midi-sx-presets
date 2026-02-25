@@ -135,7 +135,6 @@ class MidiPresetService:
         # Transport / mode state
         self.intercept_mode = True   # True = intercept transport for preset mgmt
         self.rec_counter = 0         # Consecutive rec presses
-        self.save_mode = False       # True = next note-on saves preset
         self.preset_cursor = None    # Current note for arrow navigation
 
         # MIDI ports (opened in run())
@@ -792,36 +791,49 @@ class MidiPresetService:
             self._transport_passthrough(cc)
 
     def _transport_intercept(self, cc):
-        """Handle transport in intercept mode (CCs consumed for preset mgmt)."""
+        """Handle transport in intercept mode (CCs consumed for preset mgmt).
+
+        Rec×1 + note  → save preset to that note
+        Play          → load mode (next note recalls preset)
+        Rec×3 + Stop  → switch to pass-through mode
+        Rec×3 + Play  → switch to pass-through mode
+        Stop          → cancel any pending mode
+        """
         if cc == CC_REC:
             if self.load_mode:
                 self.load_mode = False
                 _log("LOAD", "Load mode cancelled (rec pressed).")
             self.rec_counter += 1
-            self.save_mode = True
-            _log("SAVE", f"Save mode — press a note to save preset (counter={self.rec_counter})")
+            if self.rec_counter == 1:
+                _log("SAVE", "Rec×1 — press a note to save preset")
+            elif self.rec_counter >= 3:
+                _log("TRANS", f"Rec×{self.rec_counter} — press Stop or Play for pass-through")
+            else:
+                _log("TRANS", f"Rec (counter={self.rec_counter})")
 
         elif cc == CC_PLAY:
-            if self.rec_counter == 0:
-                # Direct load — next note-on selects the preset to recall
+            if self.rec_counter >= 3:
+                self.rec_counter = 0
+                self.intercept_mode = False
+                _log("MODE", "Switched to PASS-THROUGH mode")
+            elif self.rec_counter == 0:
                 self.load_mode = True
                 self.recording = False
                 _log("LOAD", "Direct load — send a note-on to select the preset.")
             else:
-                _log("TRANS", f"Play ignored (counter={self.rec_counter})")
+                self.rec_counter = 0
+                _log("TRANS", "Play — counter cleared")
 
         elif cc == CC_STOP:
+            if self.rec_counter >= 3:
+                self.rec_counter = 0
+                self.intercept_mode = False
+                _log("MODE", "Switched to PASS-THROUGH mode")
+                return
             if self.load_mode:
                 self.load_mode = False
                 _log("LOAD", "Load mode cancelled.")
-            if self.save_mode:
-                self.save_mode = False
-                _log("SAVE", "Save mode cancelled.")
-            counter = self.rec_counter
             self.rec_counter = 0
-            if counter == 0:
-                return
-            _log("TRANS", f"Stop with counter={counter} — cleared")
 
         elif cc == CC_REWIND:
             self.load_mode = False
@@ -832,22 +844,33 @@ class MidiPresetService:
             self._navigate_preset(1)
 
     def _transport_passthrough(self, cc):
-        """Handle transport in pass-through mode (CCs forwarded to hardware)."""
+        """Handle transport in pass-through mode (CCs forwarded to hardware).
+
+        Rec×3 + Stop → switch back to intercept mode
+        Rec×3 + Play → switch back to intercept mode
+        """
         if cc == CC_REC:
             self.rec_counter += 1
-            _log("TRANS", f"Rec (counter={self.rec_counter})")
+            if self.rec_counter >= 3:
+                _log("TRANS", f"Rec×{self.rec_counter} — press Stop or Play to enter intercept")
+            else:
+                _log("TRANS", f"Rec (counter={self.rec_counter})")
+
+        elif cc == CC_PLAY:
+            counter = self.rec_counter
+            self.rec_counter = 0
+            if counter >= 3:
+                self.intercept_mode = True
+                _log("MODE", "Switched to INTERCEPT mode")
+            # Play is also forwarded to hardware (handled by caller)
 
         elif cc == CC_STOP:
             counter = self.rec_counter
             self.rec_counter = 0
-            if counter == 0:
-                return
-            if counter == 2:
-                # Valid action placeholder for pass-through counter=2
-                _log("TRANS", f"Stop with counter=2 — action TBD")
-                return
-            # counter=1 or >2: no action, just clear
-            _log("TRANS", f"Stop with counter={counter} — cleared")
+            if counter >= 3:
+                self.intercept_mode = True
+                _log("MODE", "Switched to INTERCEPT mode")
+            # Stop is also forwarded to hardware (handled by caller)
 
     def _navigate_preset(self, direction):
         """Move the preset cursor by *direction* (+1/-1) and recall."""
@@ -888,8 +911,7 @@ class MidiPresetService:
 
         # Note-on (velocity > 0)
         if msg.type == "note_on" and msg.velocity > 0:
-            if self.save_mode:
-                self.save_mode = False
+            if self.rec_counter == 1:
                 self.rec_counter = 0
                 self.preset_cursor = msg.note
                 self._save_preset_from_state(msg.note, msg.channel)
