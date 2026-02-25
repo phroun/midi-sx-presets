@@ -211,30 +211,28 @@ class MidiPresetService:
         For each destination channel:
           1. Inherit from the channel's cc_group (names prefixed).
           2. Apply bare integer-keyed overrides (not prefixed).
-          3. Check for name conflicts within the destination.
+          3. Check for name conflicts across all destinations.
 
-        Returns a tuple of two dicts:
-          forward:  ``{dest_id: {channel: {cc_num: name}}}``
-          reverse:  ``{dest_id: {name: (channel, cc_num)}}``
+        Returns a tuple of two flat dicts:
+          forward:  ``{(channel, cc_num): name}``
+          reverse:  ``{name: (channel, cc_num)}``
         Logs warnings for every conflict found.
         """
-        forward = {}
-        reverse_all = {}
+        forward = {}   # (ch, cc_num) -> name
+        reverse = {}   # name -> (ch, cc_num)
         for dest_id, dest_cfg in self.destinations_map.items():
             prefix = dest_cfg.get("prefix", "")
             channels_cfg = dest_cfg.get("channels", {})
-            dest_names = {}
-            reverse = {}  # {name: (channel, cc_num)} — conflict check + kept
 
             for ch, ch_cfg in channels_cfg.items():
                 ch = int(ch)
-                ch_names = {}
                 if not isinstance(ch_cfg, dict):
                     ch_cfg = {}
 
                 # 1) Inherit from cc_group, prefixed (channel prefix overrides dest)
                 ch_prefix = ch_cfg.get("prefix", prefix)
                 group_name = ch_cfg.get("cc_group")
+                ch_names = {}
                 if group_name and group_name in self.cc_name_sets:
                     for cc_num, raw_name in self.cc_name_sets[group_name].items():
                         ch_names[int(cc_num)] = f"{ch_prefix}_{raw_name}" if ch_prefix else raw_name
@@ -248,22 +246,25 @@ class MidiPresetService:
                         except (ValueError, TypeError):
                             pass
 
-                dest_names[ch] = ch_names
-
-                # 3) Conflict detection within this destination
+                # 3) Merge into flat maps with conflict detection
                 for cc_num, name in ch_names.items():
-                    prev = reverse.get(name)
-                    if prev is not None and prev != (ch, cc_num):
+                    fwd_prev = forward.get((ch, cc_num))
+                    if fwd_prev is not None and fwd_prev != name:
+                        _log("WARN",
+                             f"Destination '{dest_id}': ch{ch}/CC{cc_num} "
+                             f"already mapped to '{fwd_prev}', "
+                             f"overwriting with '{name}'")
+                    forward[(ch, cc_num)] = name
+
+                    rev_prev = reverse.get(name)
+                    if rev_prev is not None and rev_prev != (ch, cc_num):
                         _log("WARN",
                              f"Destination '{dest_id}': name conflict — "
-                             f"'{name}' maps to both ch{prev[0]}/CC{prev[1]} "
+                             f"'{name}' maps to both ch{rev_prev[0]}/CC{rev_prev[1]} "
                              f"and ch{ch}/CC{cc_num}")
-                    else:
-                        reverse[name] = (ch, cc_num)
+                    reverse[name] = (ch, cc_num)
 
-            forward[dest_id] = dest_names
-            reverse_all[dest_id] = reverse
-        return forward, reverse_all
+        return forward, reverse
 
     def _load_cc_mappings(self):
         """Load cc_mappings.yaml — shift/joystick definitions and CC routing."""
@@ -924,20 +925,21 @@ class MidiPresetService:
         tmode = "intercept" if self.intercept_mode else "passthrough"
         _log("INIT", f"Transport    : {tmode}")
         if dest_count:
-            _log("INIT", f"Destinations : {dest_count} configured")
+            _log("INIT", f"Destinations : {dest_count} configured, "
+                 f"{len(self.resolved_destinations)} resolved names")
             for dest_id, dest_cfg in self.destinations_map.items():
                 prefix = dest_cfg.get("prefix", "")
                 channels_cfg = dest_cfg.get("channels", {})
                 ch_list = sorted(int(c) for c in channels_cfg)
                 _log("INIT", f"  {dest_id}: prefix='{prefix}', channels={ch_list}")
-                resolved_chs = self.resolved_destinations.get(dest_id, {})
                 for ch in ch_list:
                     ch_cfg = channels_cfg.get(ch, channels_cfg.get(str(ch), {}))
                     group = ch_cfg.get("cc_group", "-") if isinstance(ch_cfg, dict) else "-"
                     n_overrides = sum(1 for k in (ch_cfg if isinstance(ch_cfg, dict) else {})
                                       if k not in self._CH_RESERVED_KEYS
                                       and isinstance(k, int))
-                    n_resolved = len(resolved_chs.get(ch, {}))
+                    n_resolved = sum(1 for (c, _) in self.resolved_destinations
+                                     if c == ch)
                     parts = f"group={group}, {n_resolved} names"
                     if n_overrides:
                         parts += f" ({n_overrides} override(s))"
