@@ -17,6 +17,7 @@ Protocol (SysEx, mfr 0x7D by default):
   F0 7D <dev> 04 <ascii…> F7   -  Preset name (sent back to device on recall)
   F0 7D <dev> 05 <dest> F7     -  Destination marker (sent during recall)
   F0 7D <dev> 06 F7            -  Abandon recording (cancel without saving)
+  F0 7D <dev> 07 <ascii…> F7   -  Debug text (printed to console, supports ANSI)
 
 Usage:
   python midi_preset_service.py [--config-dir DIR] [--list-ports]
@@ -61,6 +62,7 @@ CMD_LOAD_PRESET = 0x03
 CMD_PRESET_NAME = 0x04   # Sent back to the device on recall
 CMD_DEST_MARKER = 0x05   # Sent before each destination's CCs during recall
 CMD_ABANDON = 0x06        # Cancel current recording without saving
+CMD_DEBUG_TEXT = 0x07     # Arbitrary text → console (supports ANSI escapes)
 
 
 # --- YAML helpers ------------------------------------------------------------
@@ -113,9 +115,13 @@ class MidiPresetService:
         self.dest_data = {}           # dest_num -> {"ccs": {cc_num: val}, "pc": int|None}
         self.last_note = None         # (channel, note_number)
 
+        # Routing mode (None = standalone virtual port, dict = proxy)
+        self.routing = self.config.get("routing")
+
         # MIDI ports (opened in run())
         self.midi_in = None
         self.midi_out = None
+        self.midi_return = None  # Recall output (= midi_out in standalone mode)
 
     # -- Config / persistence -------------------------------------------------
 
@@ -261,6 +267,8 @@ class MidiPresetService:
             self._cmd_load_preset()
         elif cmd == CMD_ABANDON:
             self._cmd_abandon()
+        elif cmd == CMD_DEBUG_TEXT:
+            self._cmd_debug_text(data[3:])
 
     def _cmd_start_record(self, dest=None):
         if not self.recording:
@@ -363,6 +371,13 @@ class MidiPresetService:
         else:
             _log("WARN", "Abandon requested but not currently recording.")
 
+    def _cmd_debug_text(self, data_bytes):
+        """Print arbitrary 7-bit-encoded text to the console."""
+        if not data_bytes:
+            return
+        text = "".join(chr(b) for b in data_bytes)
+        print(f"[  DBG ] {text}")
+
     # -- Recall ---------------------------------------------------------------
 
     def _recall_preset(self, note):
@@ -385,21 +400,21 @@ class MidiPresetService:
         if name:
             name_bytes = self._encode_name(name)
             sysex_data = [self.manufacturer_id, self.device_id, CMD_PRESET_NAME] + name_bytes
-            self.midi_out.send(mido.Message("sysex", data=sysex_data))
+            self.midi_return.send(mido.Message("sysex", data=sysex_data))
             _log("  ->", f"Name: \"{name}\"")
 
     def _recall_single(self, preset, channel):
         """Recall a preset that has no destination grouping."""
         pc = preset.get("program_change")
         if pc is not None:
-            self.midi_out.send(mido.Message("program_change", channel=channel, program=pc))
+            self.midi_return.send(mido.Message("program_change", channel=channel, program=pc))
             _log("  ->", f"PC {pc}")
         for cc_name, value in preset.get("cc_values", {}).items():
             cc_num = self._cc_name_to_number(cc_name)
             if cc_num is None:
                 _log("WARN", f"Cannot resolve CC '{cc_name}' — skipping.")
                 continue
-            self.midi_out.send(
+            self.midi_return.send(
                 mido.Message("control_change", channel=channel, control=cc_num, value=value)
             )
             _log("  ->", f"CC {cc_name}({cc_num}) = {value}")
@@ -410,12 +425,12 @@ class MidiPresetService:
             dest_num = int(dest_num)  # YAML may store as string
             # Destination marker
             marker = [self.manufacturer_id, self.device_id, CMD_DEST_MARKER, dest_num]
-            self.midi_out.send(mido.Message("sysex", data=marker))
+            self.midi_return.send(mido.Message("sysex", data=marker))
             _log("  ->", f"Dest {self._dest_display(dest_num)}")
 
             pc = dest_data.get("program_change")
             if pc is not None:
-                self.midi_out.send(
+                self.midi_return.send(
                     mido.Message("program_change", channel=channel, program=pc)
                 )
                 _log("  ->", f"  PC {pc}")
@@ -425,7 +440,7 @@ class MidiPresetService:
                 if cc_num is None:
                     _log("WARN", f"  Cannot resolve CC '{cc_name}' — skipping.")
                     continue
-                self.midi_out.send(
+                self.midi_return.send(
                     mido.Message("control_change", channel=channel, control=cc_num, value=value)
                 )
                 _log("  ->", f"  CC {cc_name}({cc_num}) = {value}")
@@ -434,7 +449,10 @@ class MidiPresetService:
 
     def _handle_message(self, msg):
         if msg.type == "sysex":
-            self._handle_sysex(msg.data)
+            if self._is_ours(msg.data):
+                self._handle_sysex(msg.data)
+                return  # Intercepted — do not forward
+            self._forward(msg)
             return
 
         # Note-on (velocity > 0)
@@ -442,28 +460,37 @@ class MidiPresetService:
             if self.load_mode:
                 self.load_mode = False
                 self._recall_preset(msg.note)
-                return
+                return  # Intercepted
             self.last_note = (msg.channel, msg.note)
             if self.recording:
                 _log("NOTE", f"ch={msg.channel} note={msg.note} (preset tag)")
+                return  # Tag note — do not forward
+            self._forward(msg)
             return
 
-        # Track CCs / PCs while recording
+        # Track CCs / PCs while recording (captured AND forwarded)
         if self.recording:
             dd = self.dest_data.get(self.active_dest)
-            if dd is None:
-                return
-            if msg.type == "control_change":
-                dd["ccs"][msg.control] = msg.value
-                dest_tag = f" [dest {self.active_dest}]" if self.multi_dest else ""
-                name = self._cc_num_to_name(
-                    msg.control, self.active_dest if self.multi_dest else None
-                )
-                _log("CC", f"{name}({msg.control}) = {msg.value}{dest_tag}")
-            elif msg.type == "program_change":
-                dd["pc"] = msg.program
-                dest_tag = f" [dest {self.active_dest}]" if self.multi_dest else ""
-                _log("PC", f"program={msg.program}{dest_tag}")
+            if dd is not None:
+                if msg.type == "control_change":
+                    dd["ccs"][msg.control] = msg.value
+                    dest_tag = f" [dest {self.active_dest}]" if self.multi_dest else ""
+                    name = self._cc_num_to_name(
+                        msg.control, self.active_dest if self.multi_dest else None
+                    )
+                    _log("CC", f"{name}({msg.control}) = {msg.value}{dest_tag}")
+                elif msg.type == "program_change":
+                    dd["pc"] = msg.program
+                    dest_tag = f" [dest {self.active_dest}]" if self.multi_dest else ""
+                    _log("PC", f"program={msg.program}{dest_tag}")
+
+        # Forward all non-intercepted traffic (proxy mode)
+        self._forward(msg)
+
+    def _forward(self, msg):
+        """Forward a message to the hardware output (proxy mode only)."""
+        if self.routing and self.midi_out:
+            self.midi_out.send(msg)
 
     # -- Run loop -------------------------------------------------------------
 
@@ -474,7 +501,14 @@ class MidiPresetService:
 
         _log("INIT", "MIDI SysEx Preset Manager")
         _log("INIT", f"Config dir   : {self.config_dir}")
-        _log("INIT", f"Virtual port : {port_name}")
+        if self.routing:
+            _log("INIT", f"Mode         : proxy")
+            _log("INIT", f"IAC input    : {self.routing['iac_input']}")
+            _log("INIT", f"IAC return   : {self.routing['iac_return']}")
+            _log("INIT", f"Hardware out : {self.routing['hardware_output']}")
+        else:
+            _log("INIT", f"Mode         : standalone")
+            _log("INIT", f"Virtual port : {port_name}")
         _log("INIT", f"Device ID    : 0x{self.device_id:02X}")
         _log("INIT", f"Manufacturer : 0x{self.manufacturer_id:02X}")
         _log("INIT", f"Presets      : {len(self.presets)} loaded")
@@ -495,13 +529,20 @@ class MidiPresetService:
         print(f"  Abandon       : F0 {mid:02X} {dev:02X} {CMD_ABANDON:02X} F7")
         print(f"  (Name reply)  : F0 {mid:02X} {dev:02X} {CMD_PRESET_NAME:02X} <ascii> F7")
         print(f"  (Dest marker) : F0 {mid:02X} {dev:02X} {CMD_DEST_MARKER:02X} <dest> F7")
+        print(f"  Debug text    : F0 {mid:02X} {dev:02X} {CMD_DEBUG_TEXT:02X} <ascii…> F7")
         print()
         print("Listening… (Ctrl-C to quit)")
         print()
 
         try:
-            self.midi_in = mido.open_input(port_name, virtual=True)
-            self.midi_out = mido.open_output(port_name, virtual=True)
+            if self.routing:
+                self.midi_in = mido.open_input(self.routing["iac_input"])
+                self.midi_out = mido.open_output(self.routing["hardware_output"])
+                self.midi_return = mido.open_output(self.routing["iac_return"])
+            else:
+                self.midi_in = mido.open_input(port_name, virtual=True)
+                self.midi_out = mido.open_output(port_name, virtual=True)
+                self.midi_return = self.midi_out
 
             for msg in self.midi_in:
                 self._handle_message(msg)
@@ -517,6 +558,8 @@ class MidiPresetService:
                 self.midi_in.close()
             if self.midi_out:
                 self.midi_out.close()
+            if self.midi_return and self.midi_return is not self.midi_out:
+                self.midi_return.close()
 
 
 # --- Utilities ---------------------------------------------------------------

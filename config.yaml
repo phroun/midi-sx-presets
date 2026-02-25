@@ -4,6 +4,7 @@
 # to customise the service.
 
 # Name of the virtual MIDI port created by the service.
+# Used only in standalone mode (when 'routing' is not configured).
 # Connect your DAW / MainStage to this port.
 port_name: MIDI SX Presets
 
@@ -12,3 +13,24 @@ device_id: 0x01
 
 # SysEx manufacturer ID. 0x7D = non-commercial / educational.
 manufacturer_id: 0x7D
+
+# --- MIDI Routing (proxy mode) -----------------------------------------------
+#
+# When configured, the service acts as a transparent MIDI proxy between
+# MainStage and your hardware MIDI interface:
+#
+#   MainStage Scripter  →  iac_input  →  [service]  →  hardware_output
+#                                            ↕
+#                          iac_return  ←  [service]   (preset recall data)
+#
+# All non-preset traffic is forwarded transparently to hardware_output.
+# SysEx preset commands are intercepted and handled by the service.
+# Preset recall data is sent back to MainStage via iac_return.
+#
+# Uncomment and set the port names to match your system.
+# Use --list-ports to see available MIDI port names.
+#
+# routing:
+#   iac_input: "IAC Driver Bus 1"
+#   iac_return: "IAC Driver Bus 2"
+#   hardware_output: "Your MIDI Interface"
