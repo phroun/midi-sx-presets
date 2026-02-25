@@ -518,7 +518,7 @@ function HandleMIDI(event) {
     var debugMsg = "";
 
     // --- SysEx handling (remote commands from Python service) -----------------
-    if (event instanceof Sysex) {
+    if (event.data && event.data.length) {
         handleIncomingSysex(event);
         return;
     }
