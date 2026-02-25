@@ -1398,7 +1398,7 @@ class MidiPresetService:
         results = []
         matched = False
 
-        for nm_idx, nm in enumerate(self.note_mappings):
+        for nm in self.note_mappings:
             # Range check (inclusive)
             if note < nm["low"] or note > nm["high"]:
                 continue
@@ -1432,8 +1432,8 @@ class MidiPresetService:
                     fallback_pri = params.get(
                         "fallback_priority", "most_recent")
                 else:
-                    # Legacy: isolate each mapping in its own pool
-                    pool_key = ("legacy", nm_idx)
+                    # Legacy: no instance name, key by output channel
+                    pool_key = out_ch
                     max_poly = nm["max_polyphony"]
                     replace_pri = nm.get("replace_priority", "lowest")
                     fallback_pri = nm.get(
