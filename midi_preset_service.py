@@ -59,13 +59,9 @@ SYSEX_MANUFACTURER_ID = 0x7D  # Non-commercial / educational use
 DEFAULT_DEVICE_ID = 0x01
 
 # Commands
-CMD_START_RECORD = 0x01
-CMD_SAVE_PRESET = 0x02
 CMD_LOAD_PRESET = 0x03
 CMD_PRESET_NAME = 0x04   # Sent back to the device on recall
-CMD_DEST_MARKER = 0x05   # Sent before each destination's CCs during recall
-CMD_ABANDON = 0x06        # Cancel current recording without saving
-CMD_DEBUG_TEXT = 0x07     # Arbitrary text → console (supports ANSI escapes)
+CMD_DEBUG_TEXT  = 0x07   # Arbitrary text → console (supports ANSI escapes)
 CMD_REMOTE_CMD = 0x08     # Text command sent to device via return port
 CMD_DEVICE_CMD = 0x09     # Text command from device → service (machine-readable)
 
@@ -122,12 +118,7 @@ class MidiPresetService:
         self.device_id = self.config.get("device_id", DEFAULT_DEVICE_ID)
 
         # Runtime state
-        self.recording = False
         self.load_mode = False
-        self.multi_dest = False       # True when START_RECORD included a dest byte
-        self.active_dest = 0          # Currently-recording destination number
-        self.dest_data = {}           # dest_num -> {"ccs": {cc_num: val}, "pc": int|None}
-        self.last_note = None         # (channel, note_number)
 
         # Routing mode (None = standalone virtual port, dict = proxy)
         self.routing = self.config.get("routing")
@@ -287,62 +278,18 @@ class MidiPresetService:
         """Encode a preset name as 7-bit-safe bytes for SysEx (max 64 chars)."""
         return [min(ord(c), 127) for c in str(name)[:64]]
 
-    def _dest_display(self, dest):
-        """Human-readable label for a destination number."""
-        if dest in self.destinations_map:
-            dname = self.destinations_map[dest].get("name", "")
-            if dname:
-                return f"{dest} ({dname})"
-        return str(dest)
-
     # -- Command handlers -----------------------------------------------------
 
     def _handle_sysex(self, data):
         if not self._is_ours(data):
             return
         cmd = data[2]
-        if cmd == CMD_START_RECORD:
-            dest = data[3] if len(data) > 3 else None
-            self._cmd_start_record(dest)
-        elif cmd == CMD_SAVE_PRESET:
-            self._cmd_save_preset()
-        elif cmd == CMD_LOAD_PRESET:
+        if cmd == CMD_LOAD_PRESET:
             self._cmd_load_preset()
-        elif cmd == CMD_ABANDON:
-            self._cmd_abandon()
         elif cmd == CMD_DEBUG_TEXT:
             self._cmd_debug_text(data[3:])
         elif cmd == CMD_DEVICE_CMD:
             self._cmd_device_cmd(data[3:])
-
-    def _cmd_start_record(self, dest=None):
-        if not self.recording:
-            # Begin a new recording session
-            self.recording = True
-            self.load_mode = False
-            self.dest_data = {}
-            self.last_note = None
-
-            if dest is not None:
-                self.multi_dest = True
-                self.active_dest = dest
-                self.dest_data[dest] = {"ccs": {}, "pc": None}
-                _log("REC", f"Recording started — destination {self._dest_display(dest)}")
-            else:
-                self.multi_dest = False
-                self.active_dest = 0
-                self.dest_data[0] = {"ccs": {}, "pc": None}
-                _log("REC", "Recording started")
-        else:
-            # Already recording — switch to a (possibly new) destination
-            if dest is not None:
-                self.multi_dest = True
-                self.active_dest = dest
-                if dest not in self.dest_data:
-                    self.dest_data[dest] = {"ccs": {}, "pc": None}
-                _log("REC", f"Switched to destination {self._dest_display(dest)}")
-            else:
-                _log("WARN", "Already recording — include a dest byte to switch destination.")
 
     def _save_preset_from_state(self, note, channel):
         """Save the current mapping engine destination states as a preset."""
@@ -372,79 +319,12 @@ class MidiPresetService:
 
         self.presets[note] = preset
         self._save_preset_to_disk(note)
-        _log("SAVE", f"Preset {note} saved ({len(cc_data)} CCs from mapping state).")
-
-    def _cmd_save_preset(self):
-        if not self.recording:
-            _log("WARN", "Save requested but not currently recording.")
-            return
-        if self.last_note is None:
-            _log("WARN", "Save requested but no note-on was received during recording.")
-            self.recording = False
-            return
-
-        channel, note = self.last_note
-
-        # Check write-protection
-        existing = self.presets.get(note, {})
-        if existing.get("read_only", False):
-            _log("DENY", f"Preset {note} is read-only — save rejected.")
-            self.recording = False
-            return
-
-        # Assemble preset, preserving user-set name / read_only
-        preset = {
-            "name": existing.get("name", f"Preset {note}"),
-            "read_only": existing.get("read_only", False),
-            "channel": channel,
-        }
-
-        if self.multi_dest:
-            destinations = {}
-            for dnum, dd in self.dest_data.items():
-                entry = {}
-                if dd["pc"] is not None:
-                    entry["program_change"] = dd["pc"]
-                if dd["ccs"]:
-                    cc_data = {}
-                    for cc_num, value in dd["ccs"].items():
-                        cc_data[self._cc_num_to_name(cc_num, dnum)] = value
-                    entry["cc_values"] = cc_data
-                if entry:
-                    destinations[dnum] = entry
-            if destinations:
-                preset["destinations"] = destinations
-        else:
-            dd = self.dest_data.get(0, {"ccs": {}, "pc": None})
-            if dd["pc"] is not None:
-                preset["program_change"] = dd["pc"]
-            if dd["ccs"]:
-                cc_data = {}
-                for cc_num, value in dd["ccs"].items():
-                    cc_data[self._cc_num_to_name(cc_num)] = value
-                preset["cc_values"] = cc_data
-
-        self.presets[note] = preset
-        self._save_preset_to_disk(note)
-
-        total_ccs = sum(len(dd["ccs"]) for dd in self.dest_data.values())
-        extra = f" across {len(self.dest_data)} destination(s)" if self.multi_dest else ""
-        _log("SAVE", f"Preset {note} saved ({total_ccs} CCs{extra}).")
-        self.recording = False
+        total = sum(len(ccs) for ccs in channels.values())
+        _log("SAVE", f"Preset {note} saved ({total} CCs across {len(channels)} channel(s)).")
 
     def _cmd_load_preset(self):
         self.load_mode = True
-        self.recording = False
         _log("LOAD", "Load mode — send a note-on to select the preset to recall.")
-
-    def _cmd_abandon(self):
-        if self.recording:
-            self.recording = False
-            self.dest_data = {}
-            self.last_note = None
-            _log("ABANDON", "Recording abandoned.")
-        else:
-            _log("WARN", "Abandon requested but not currently recording.")
 
     def _cmd_debug_text(self, data_bytes):
         """Print arbitrary 7-bit-encoded text to the console."""
@@ -479,9 +359,8 @@ class MidiPresetService:
         """Report service status back to the device."""
         n = len(self.presets)
         mode = "proxy" if self.routing else "standalone"
-        rec = "recording" if self.recording else "idle"
         tmode = "intercept" if self.intercept_mode else "passthrough"
-        self._send_remote(f"status {mode} {rec} presets={n} transport={tmode}")
+        self._send_remote(f"status {mode} presets={n} transport={tmode}")
 
     def _devcmd_list(self, args):
         """Send back a list of stored preset slots."""
@@ -540,9 +419,7 @@ class MidiPresetService:
         channel = preset.get("channel", 0)
         _log("RECALL", f"Preset {note}: \"{name}\"")
 
-        if "destinations" in preset:
-            self._recall_multi_dest(preset, channel)
-        elif "channels" in preset:
+        if "channels" in preset:
             self._recall_channeled(preset)
         else:
             # Legacy flat format — all CCs on one channel
@@ -587,33 +464,6 @@ class MidiPresetService:
                 self._set_dest(cc_num, ch, value)
                 _log("  ->", f"CC {cc_name}({cc_num}) ch{ch + 1} = {value}")
 
-    def _recall_multi_dest(self, preset, channel):
-        """Recall a preset with destination grouping, sending SysEx markers."""
-        for dest_num, dest_data in preset["destinations"].items():
-            dest_num = int(dest_num)  # YAML may store as string
-            # Destination marker
-            marker = [self.manufacturer_id, self.device_id, CMD_DEST_MARKER, dest_num]
-            self.midi_return.send(mido.Message("sysex", data=marker))
-            _log("  ->", f"Dest {self._dest_display(dest_num)}")
-
-            pc = dest_data.get("program_change")
-            if pc is not None:
-                self.midi_return.send(
-                    mido.Message("program_change", channel=channel, program=pc)
-                )
-                _log("  ->", f"  PC {pc}")
-
-            for cc_name, value in dest_data.get("cc_values", {}).items():
-                cc_num = self._cc_name_to_number(cc_name, dest_num)
-                if cc_num is None:
-                    _log("WARN", f"  Cannot resolve CC '{cc_name}' — skipping.")
-                    continue
-                self.midi_return.send(
-                    mido.Message("control_change", channel=channel, control=cc_num, value=value)
-                )
-                self._set_dest(cc_num, channel, value)
-                _log("  ->", f"  CC {cc_name}({cc_num}) = {value}")
-
     # -- CC Mapping Engine ----------------------------------------------------
 
     def _decode_relative(self, value):
@@ -650,11 +500,7 @@ class MidiPresetService:
             self._send_cc(cc_num, channel, value)
 
     def _send_cc(self, cc, channel, value):
-        """Send a mapped CC to hardware output. Also captures during recording."""
-        if self.recording:
-            dd = self.dest_data.get(self.active_dest)
-            if dd is not None:
-                dd["ccs"][cc] = value
+        """Send a mapped CC to hardware output."""
         if self.midi_out:
             self.midi_out.send(
                 mido.Message("control_change",
@@ -837,7 +683,6 @@ class MidiPresetService:
                 _log("MODE", "Switched to PASS-THROUGH mode")
             elif self.rec_counter == 0:
                 self.load_mode = True
-                self.recording = False
                 _log("LOAD", "Direct load — send a note-on to select the preset.")
             else:
                 self.rec_counter = 0
@@ -940,10 +785,6 @@ class MidiPresetService:
                 self.preset_cursor = msg.note  # Track for arrow navigation
                 self._recall_preset(msg.note)
                 return  # Intercepted
-            self.last_note = (msg.channel, msg.note)
-            if self.recording:
-                _log("NOTE", f"ch={msg.channel} note={msg.note} (preset tag)")
-                return  # Tag note — do not forward
             self._forward(msg)
             return
 
@@ -958,17 +799,11 @@ class MidiPresetService:
             # 3. Joystick CCs update held/latch bits
             self._process_joystick(msg)
             # 4. Run through CC mapping table (all matching actions fire)
-            #    Mapped outputs sent via _send_cc (also captured during recording)
             self._process_cc_mapping(msg)
             return  # CCs never forwarded raw — only mapped outputs are sent
 
-        # Program Change — capture during recording, forward to hardware
+        # Program Change — forward to hardware
         if msg.type == "program_change":
-            if self.recording:
-                dd = self.dest_data.get(self.active_dest)
-                if dd is not None:
-                    dd["pc"] = msg.program
-                    _log("PC", f"program={msg.program}")
             self._forward(msg)
             return
 
@@ -1016,21 +851,19 @@ class MidiPresetService:
         mid = self.manufacturer_id
         dev = self.device_id
         print("SysEx commands (hex bytes including F0/F7):")
-        print(f"  Start Record  : F0 {mid:02X} {dev:02X} {CMD_START_RECORD:02X} [<dest>] F7")
-        print(f"  Save Preset   : F0 {mid:02X} {dev:02X} {CMD_SAVE_PRESET:02X} F7")
         print(f"  Load Preset   : F0 {mid:02X} {dev:02X} {CMD_LOAD_PRESET:02X} F7")
-        print(f"  Abandon       : F0 {mid:02X} {dev:02X} {CMD_ABANDON:02X} F7")
         print(f"  (Name reply)  : F0 {mid:02X} {dev:02X} {CMD_PRESET_NAME:02X} <ascii> F7")
-        print(f"  (Dest marker) : F0 {mid:02X} {dev:02X} {CMD_DEST_MARKER:02X} <dest> F7")
         print(f"  Debug text    : F0 {mid:02X} {dev:02X} {CMD_DEBUG_TEXT:02X} <ascii…> F7")
         print(f"  Remote cmd    : F0 {mid:02X} {dev:02X} {CMD_REMOTE_CMD:02X} <ascii…> F7")
         print(f"  Device cmd    : F0 {mid:02X} {dev:02X} {CMD_DEVICE_CMD:02X} <ascii…> F7")
         print()
         print("Transport (intercept mode):")
-        print("  Play            : Direct load — next note-on recalls that preset")
-        print("  Rewind/Forward  : Navigate presets sequentially (with full recall)")
-        print("  Rec             : Increment counter")
-        print("  Stop            : Execute/clear counter")
+        print("  Play            : Load — next note-on recalls that preset")
+        print("  Rec×1 + note    : Save current state to that note")
+        print("  Rec×3 + Stop    : Switch to pass-through mode")
+        print("  Rec×3 + Play    : Switch to pass-through mode")
+        print("  Rewind/Forward  : Navigate presets sequentially")
+        print("  Stop            : Cancel / clear counter")
         print()
         print("Device commands: ping, status, list, mode [intercept|passthrough]")
         print()
