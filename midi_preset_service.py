@@ -1253,16 +1253,20 @@ class MidiPresetService:
             self.poly_states[key] = {"held": [], "active": []}
         return self.poly_states[key]
 
-    def _poly_note_on(self, state, pitch, velocity, max_poly, replace_priority):
+    def _poly_note_on(self, state, pitch, velocity, max_poly,
+                      replace_priority, transpose, out_ch):
         """Process note-on through polyphony limiter.
 
-        Tracks notes by their original (pre-transpose) pitch.
+        Tracks notes by their original (pre-transpose) pitch, along with
+        the transpose and output channel used when the note was activated.
         Returns a list of action tuples:
-          ("on", pitch, velocity, reason)  or  ("off", pitch, reason)
+          ("on", pitch, velocity, reason, transpose, out_ch)
+          ("off", pitch, reason, transpose, out_ch)
         where reason is one of: "new", "retrigger", "replace", "steal".
         """
         now = time.monotonic()
-        note_info = {"pitch": pitch, "velocity": velocity, "timestamp": now}
+        note_info = {"pitch": pitch, "velocity": velocity, "timestamp": now,
+                     "transpose": transpose, "out_ch": out_ch}
 
         # Update held-notes list
         state["held"] = [n for n in state["held"] if n["pitch"] != pitch]
@@ -1275,30 +1279,37 @@ class MidiPresetService:
             state["active"] = [n for n in state["active"]
                                if n["pitch"] != pitch]
             state["active"].append(note_info)
-            results.append(("on", pitch, velocity, "retrigger"))
+            results.append(("on", pitch, velocity, "retrigger",
+                            transpose, out_ch))
             return results
 
         # Room available → just add
         if len(state["active"]) < max_poly:
             state["active"].append(note_info)
-            results.append(("on", pitch, velocity, "new"))
+            results.append(("on", pitch, velocity, "new",
+                            transpose, out_ch))
             return results
 
-        # Polyphony full → steal a voice
+        # Polyphony full → steal a voice (use stolen note's stored values)
         to_replace = self._select_replace(state["active"], replace_priority)
         if to_replace is not None:
-            results.append(("off", to_replace["pitch"], "steal"))
+            results.append(("off", to_replace["pitch"], "steal",
+                            to_replace["transpose"], to_replace["out_ch"]))
             state["active"] = [n for n in state["active"]
                                if n["pitch"] != to_replace["pitch"]]
             state["active"].append(note_info)
-            results.append(("on", pitch, velocity, "replace"))
+            results.append(("on", pitch, velocity, "replace",
+                            transpose, out_ch))
 
         return results
 
-    def _poly_note_off(self, state, pitch, fallback_priority):
+    def _poly_note_off(self, state, pitch, fallback_priority,
+                       transpose, out_ch):
         """Process note-off through polyphony limiter.
 
         Returns a list of action tuples (same format as _poly_note_on).
+        Uses stored transpose/out_ch from the released and fallback notes
+        so cross-range actions produce correct output.
         """
         # Remove from held
         state["held"] = [n for n in state["held"] if n["pitch"] != pitch]
@@ -1306,10 +1317,15 @@ class MidiPresetService:
         results = []
 
         # Only act if this note is currently active
-        if not any(n["pitch"] == pitch for n in state["active"]):
+        active_note = next(
+            (n for n in state["active"] if n["pitch"] == pitch), None)
+        if active_note is None:
             return results
 
-        results.append(("off", pitch, "release"))
+        # Use the stored values from when this note was activated
+        rel_transpose = active_note.get("transpose", transpose)
+        rel_out_ch = active_note.get("out_ch", out_ch)
+        results.append(("off", pitch, "release", rel_transpose, rel_out_ch))
         state["active"] = [n for n in state["active"]
                            if n["pitch"] != pitch]
 
@@ -1319,7 +1335,9 @@ class MidiPresetService:
         if fallback is not None:
             state["active"].append(fallback)
             results.append(("on", fallback["pitch"],
-                            fallback["velocity"], "fallback"))
+                            fallback["velocity"], "fallback",
+                            fallback.get("transpose", transpose),
+                            fallback.get("out_ch", out_ch)))
 
         return results
 
@@ -1414,8 +1432,8 @@ class MidiPresetService:
                     fallback_pri = params.get(
                         "fallback_priority", "most_recent")
                 else:
-                    # Legacy: no instance name, key by channel
-                    pool_key = out_ch
+                    # Legacy: no instance name, key by range+channel
+                    pool_key = ("legacy", out_ch, nm["low"], nm["high"])
                     max_poly = nm["max_polyphony"]
                     replace_pri = nm.get("replace_priority", "lowest")
                     fallback_pri = nm.get(
@@ -1425,35 +1443,42 @@ class MidiPresetService:
 
                 if is_note_on:
                     actions = self._poly_note_on(
-                        state, note, msg.velocity, max_poly, replace_pri)
+                        state, note, msg.velocity, max_poly, replace_pri,
+                        transpose, out_ch)
                 else:
                     actions = self._poly_note_off(
-                        state, note, fallback_pri)
+                        state, note, fallback_pri, transpose, out_ch)
 
                 pool_label = (f"'{inst_name}'"
                               if inst_name else f"ch{out_ch + 1}")
                 for action in actions:
                     if action[0] == "on":
-                        out_note = action[1] + transpose
+                        # action: ("on", pitch, vel, reason, transpose, out_ch)
+                        a_transpose = action[4]
+                        a_out_ch = action[5]
+                        out_note = action[1] + a_transpose
                         if 0 <= out_note <= 127:
                             results.append(mido.Message(
-                                "note_on", note=out_note, channel=out_ch,
+                                "note_on", note=out_note, channel=a_out_ch,
                                 velocity=action[2]))
                             _log("NOTE", f"poly {action[3]} "
                                  f"note={action[1]}→{out_note} "
-                                 f"ch{out_ch + 1} vel={action[2]} "
+                                 f"ch{a_out_ch + 1} vel={action[2]} "
                                  f"\"{name}\" "
                                  f"[{pool_label} "
                                  f"{len(state['active'])}/{max_poly}]")
                     elif action[0] == "off":
-                        out_note = action[1] + transpose
+                        # action: ("off", pitch, reason, transpose, out_ch)
+                        a_transpose = action[3]
+                        a_out_ch = action[4]
+                        out_note = action[1] + a_transpose
                         if 0 <= out_note <= 127:
                             results.append(mido.Message(
-                                "note_off", note=out_note, channel=out_ch,
+                                "note_off", note=out_note, channel=a_out_ch,
                                 velocity=0))
                             _log("NOTE", f"poly {action[2]} "
                                  f"note={action[1]}→{out_note} "
-                                 f"ch{out_ch + 1} \"{name}\" "
+                                 f"ch{a_out_ch + 1} \"{name}\" "
                                  f"[{pool_label} "
                                  f"{len(state['active'])}/{max_poly}]")
             else:
