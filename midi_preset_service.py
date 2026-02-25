@@ -18,6 +18,7 @@ Protocol (SysEx, mfr 0x7D by default):
   F0 7D <dev> 05 <dest> F7     -  Destination marker (sent during recall)
   F0 7D <dev> 06 F7            -  Abandon recording (cancel without saving)
   F0 7D <dev> 07 <ascii…> F7   -  Debug text (printed to console, supports ANSI)
+  F0 7D <dev> 08 <ascii…> F7   -  Remote command (sent to device via return port)
 
 Usage:
   python midi_preset_service.py [--config-dir DIR] [--list-ports]
@@ -63,6 +64,7 @@ CMD_PRESET_NAME = 0x04   # Sent back to the device on recall
 CMD_DEST_MARKER = 0x05   # Sent before each destination's CCs during recall
 CMD_ABANDON = 0x06        # Cancel current recording without saving
 CMD_DEBUG_TEXT = 0x07     # Arbitrary text → console (supports ANSI escapes)
+CMD_REMOTE_CMD = 0x08     # Text command sent to device via return port
 
 
 # --- YAML helpers ------------------------------------------------------------
