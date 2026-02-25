@@ -103,7 +103,9 @@ class MidiPresetService:
         self.config = self._load_or_create_config()
         self.cc_name_sets, self.cc_default_names = self._load_cc_names()
         self.destinations_map = self._load_destinations()
-        self.resolved_destinations, self.reverse_destinations = self._resolve_destinations()
+        (self.resolved_destinations,
+         self.reverse_destinations,
+         self.auto_destinations) = self._resolve_destinations()
         self.presets = self._load_presets()
         self._load_cc_mappings()
 
@@ -213,13 +215,15 @@ class MidiPresetService:
           2. Apply bare integer-keyed overrides (not prefixed).
           3. Check for name conflicts across all destinations.
 
-        Returns a tuple of two flat dicts:
+        Returns a tuple of three flat dicts:
           forward:  ``{(channel, cc_num): name}``
           reverse:  ``{name: (channel, cc_num)}``
+          auto:     ``{unprefixed_name: (channel, cc_num)}``
         Logs warnings for every conflict found.
         """
         forward = {}   # (ch, cc_num) -> name
         reverse = {}   # name -> (ch, cc_num)
+        auto    = {}   # unprefixed_name -> (ch, cc_num)
         for dest_id, dest_cfg in self.destinations_map.items():
             prefix = dest_cfg.get("prefix", "")
             channels_cfg = dest_cfg.get("channels", {})
@@ -235,7 +239,18 @@ class MidiPresetService:
                 ch_names = {}
                 if group_name and group_name in self.cc_name_sets:
                     for cc_num, raw_name in self.cc_name_sets[group_name].items():
-                        ch_names[int(cc_num)] = f"{ch_prefix}_{raw_name}" if ch_prefix else raw_name
+                        cc_num = int(cc_num)
+                        ch_names[cc_num] = f"{ch_prefix}_{raw_name}" if ch_prefix else raw_name
+                        # auto map: unprefixed name → (ch, cc)
+                        auto_prev = auto.get(raw_name)
+                        if auto_prev is not None and auto_prev != (ch, cc_num):
+                            _log("WARN",
+                                 f"Destination '{dest_id}': auto name "
+                                 f"'{raw_name}' ambiguous — "
+                                 f"ch{auto_prev[0]}/CC{auto_prev[1]} "
+                                 f"and ch{ch}/CC{cc_num}")
+                        else:
+                            auto[raw_name] = (ch, cc_num)
 
                 # 2) Bare integer keys are CC overrides (not prefixed)
                 for key, value in ch_cfg.items():
@@ -264,7 +279,7 @@ class MidiPresetService:
                              f"and ch{ch}/CC{cc_num}")
                     reverse[name] = (ch, cc_num)
 
-        return forward, reverse
+        return forward, reverse, auto
 
     def _load_cc_mappings(self):
         """Load cc_mappings.yaml — shift/joystick definitions and CC routing.
@@ -283,16 +298,24 @@ class MidiPresetService:
         self.joystick_defs = data.get("joystick_definitions", [])
         self.cc_mappings = data.get("cc_mappings", {})
 
-        # Resolve "parameter" shorthand → cc + channel (1-based)
+        # Resolve "parameter" / "auto" shorthands → cc + channel (1-based)
         for source_cc, actions in self.cc_mappings.items():
             for action in actions:
-                if "parameter" not in action:
-                    continue
-                param = action.pop("parameter")
-                target = self.reverse_destinations.get(param)
-                if target is None:
-                    _log("WARN", f"CC mapping source {source_cc}: "
-                         f"parameter '{param}' not found in destinations")
+                if "parameter" in action:
+                    param = action.pop("parameter")
+                    target = self.reverse_destinations.get(param)
+                    if target is None:
+                        _log("WARN", f"CC mapping source {source_cc}: "
+                             f"parameter '{param}' not found in destinations")
+                        continue
+                elif "auto" in action:
+                    raw = action.pop("auto")
+                    target = self.auto_destinations.get(raw)
+                    if target is None:
+                        _log("WARN", f"CC mapping source {source_cc}: "
+                             f"auto '{raw}' not found in destinations")
+                        continue
+                else:
                     continue
                 ch, cc_num = target
                 action["cc"] = cc_num
