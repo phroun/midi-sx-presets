@@ -1,33 +1,26 @@
 # Destination Map (optional)
 #
-# Defines logical "destinations" — named groups of MIDI channels with
-# human-readable CC names derived from cc_name_sets in cc_names.yaml.
+# Each top-level key is a destination identifier.  Reserved keys inside
+# a destination:
+#   prefix    - prepended to inherited CC names (e.g. "ns" → "ns_pan")
+#   cc_group  - inherit a named set from cc_name_sets in cc_names.yaml
+#   channels  - list of MIDI channels (0–15) this destination spans
 #
-# Each destination has:
-#   prefix     - prepended to inherited CC names (e.g. prefix "ns" turns
-#                "pan" into "ns_pan").  Keeps names unique across destinations.
-#   channels   - a dict of MIDI channels (0–15).  Each channel can:
-#     cc_group   - inherit a named set from cc_name_sets (names get prefixed)
-#     overrides  - define additional CC names (by number) that are NOT
-#                  prefixed, or shadow an inherited name with a new one.
+# Any other integer key is a CC override — its value is a name that is
+# NOT prefixed and can shadow an inherited name.
 #
 # Conflict detection: if two different (channel, CC) pairs resolve to the
 # same name within one destination, a warning is logged at startup.
 
 # Example (uncomment and customise for your setup):
 #
-# destinations:
-#   nerdseq:
-#     prefix: ns
-#     channels:
-#       0:
-#         cc_group: mix_ccs
-#       1:
-#         cc_group: polysynth_ccs
-#         overrides:
-#           85: nerdseq_perf_out
-#   bluebox:
-#     prefix: bb
-#     channels:
-#       2:
-#         cc_group: mix_ccs
+# nerdseq:
+#   prefix: ns
+#   cc_group: polysynth_ccs
+#   channels: [0, 1]
+#   85: nerdseq_perf_out
+#
+# bluebox:
+#   prefix: bb
+#   cc_group: mix_ccs
+#   channels: [2]
