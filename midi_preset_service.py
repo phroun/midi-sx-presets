@@ -68,6 +68,14 @@ CMD_DEBUG_TEXT = 0x07     # Arbitrary text → console (supports ANSI escapes)
 CMD_REMOTE_CMD = 0x08     # Text command sent to device via return port
 CMD_DEVICE_CMD = 0x09     # Text command from device → service (machine-readable)
 
+# Transport CC numbers (from Scripter output)
+CC_REWIND = 115
+CC_FORWARD = 116
+CC_STOP = 117
+CC_PLAY = 118
+CC_REC = 119
+TRANSPORT_CCS = {CC_REWIND, CC_FORWARD, CC_STOP, CC_PLAY, CC_REC}
+
 
 # --- YAML helpers ------------------------------------------------------------
 
@@ -121,6 +129,11 @@ class MidiPresetService:
 
         # Routing mode (None = standalone virtual port, dict = proxy)
         self.routing = self.config.get("routing")
+
+        # Transport / mode state
+        self.intercept_mode = True   # True = intercept transport for preset mgmt
+        self.rec_counter = 0         # Consecutive rec presses
+        self.preset_cursor = None    # Current note for arrow navigation
 
         # MIDI ports (opened in run())
         self.midi_in = None
@@ -411,7 +424,8 @@ class MidiPresetService:
         n = len(self.presets)
         mode = "proxy" if self.routing else "standalone"
         rec = "recording" if self.recording else "idle"
-        self._send_remote(f"status {mode} {rec} presets={n}")
+        tmode = "intercept" if self.intercept_mode else "passthrough"
+        self._send_remote(f"status {mode} {rec} presets={n} transport={tmode}")
 
     def _devcmd_list(self, args):
         """Send back a list of stored preset slots."""
@@ -425,11 +439,28 @@ class MidiPresetService:
             names.append(f"{s}:{name}")
         self._send_remote("list " + ",".join(names))
 
+    def _devcmd_mode(self, args):
+        """Toggle or set transport mode (intercept / passthrough)."""
+        arg = args.strip().lower()
+        if arg == "intercept":
+            self.intercept_mode = True
+        elif arg in ("passthrough", "pass"):
+            self.intercept_mode = False
+        else:
+            # Toggle
+            self.intercept_mode = not self.intercept_mode
+        mode_name = "intercept" if self.intercept_mode else "passthrough"
+        self.rec_counter = 0
+        self.load_mode = False
+        _log("MODE", f"Transport mode: {mode_name}")
+        self._send_remote(f"mode {mode_name}")
+
     # Registry of device commands
     _device_commands = {
         "ping":   _devcmd_ping,
         "status": _devcmd_status,
         "list":   _devcmd_list,
+        "mode":   _devcmd_mode,
     }
 
     def _send_remote(self, text):
@@ -507,6 +538,89 @@ class MidiPresetService:
                 )
                 _log("  ->", f"  CC {cc_name}({cc_num}) = {value}")
 
+    # -- Transport handling ---------------------------------------------------
+
+    def _handle_transport(self, cc):
+        """Route a transport CC press to the active mode handler."""
+        if self.intercept_mode:
+            self._transport_intercept(cc)
+        else:
+            self._transport_passthrough(cc)
+
+    def _transport_intercept(self, cc):
+        """Handle transport in intercept mode (CCs consumed for preset mgmt)."""
+        if cc == CC_REC:
+            if self.load_mode:
+                self.load_mode = False
+                _log("LOAD", "Load mode cancelled (rec pressed).")
+            self.rec_counter += 1
+            _log("TRANS", f"Rec (counter={self.rec_counter})")
+
+        elif cc == CC_PLAY:
+            if self.rec_counter == 0:
+                # Direct load — next note-on selects the preset to recall
+                self.load_mode = True
+                self.recording = False
+                _log("LOAD", "Direct load — send a note-on to select the preset.")
+            else:
+                _log("TRANS", f"Play ignored (counter={self.rec_counter})")
+
+        elif cc == CC_STOP:
+            if self.load_mode:
+                self.load_mode = False
+                _log("LOAD", "Load mode cancelled.")
+            counter = self.rec_counter
+            self.rec_counter = 0
+            if counter == 0:
+                return
+            # Dispatch valid counter values (to be defined)
+            # For now all nonzero counters clear without action
+            _log("TRANS", f"Stop with counter={counter} — cleared")
+
+        elif cc == CC_REWIND:
+            self.load_mode = False
+            self._navigate_preset(-1)
+
+        elif cc == CC_FORWARD:
+            self.load_mode = False
+            self._navigate_preset(1)
+
+    def _transport_passthrough(self, cc):
+        """Handle transport in pass-through mode (CCs forwarded to hardware)."""
+        if cc == CC_REC:
+            self.rec_counter += 1
+            _log("TRANS", f"Rec (counter={self.rec_counter})")
+
+        elif cc == CC_STOP:
+            counter = self.rec_counter
+            self.rec_counter = 0
+            if counter == 0:
+                return
+            if counter == 2:
+                # Valid action placeholder for pass-through counter=2
+                _log("TRANS", f"Stop with counter=2 — action TBD")
+                return
+            # counter=1 or >2: no action, just clear
+            _log("TRANS", f"Stop with counter={counter} — cleared")
+
+    def _navigate_preset(self, direction):
+        """Move the preset cursor by *direction* (+1/-1) and recall."""
+        slots = sorted(self.presets.keys())
+        if not slots:
+            _log("WARN", "No presets stored — nothing to navigate.")
+            return
+
+        if self.preset_cursor is not None and self.preset_cursor in slots:
+            idx = slots.index(self.preset_cursor) + direction
+        else:
+            # First navigation: start at beginning or end
+            idx = 0 if direction > 0 else len(slots) - 1
+
+        idx = idx % len(slots)
+        self.preset_cursor = slots[idx]
+        _log("NAV", f"Preset {self.preset_cursor} (slot {idx + 1}/{len(slots)})")
+        self._recall_preset(self.preset_cursor)
+
     # -- Main message handler -------------------------------------------------
 
     def _handle_message(self, msg):
@@ -517,10 +631,20 @@ class MidiPresetService:
             self._forward(msg)
             return
 
+        # Transport CCs (rec, play, stop, arrows)
+        if msg.type == "control_change" and msg.control in TRANSPORT_CCS:
+            if msg.value > 0:  # Ignore release pulse
+                self._handle_transport(msg.control)
+            if self.intercept_mode:
+                return  # Consumed — do not forward
+            self._forward(msg)
+            return
+
         # Note-on (velocity > 0)
         if msg.type == "note_on" and msg.velocity > 0:
             if self.load_mode:
                 self.load_mode = False
+                self.preset_cursor = msg.note  # Track for arrow navigation
                 self._recall_preset(msg.note)
                 return  # Intercepted
             self.last_note = (msg.channel, msg.note)
@@ -575,6 +699,8 @@ class MidiPresetService:
         _log("INIT", f"Manufacturer : 0x{self.manufacturer_id:02X}")
         _log("INIT", f"Presets      : {len(self.presets)} loaded")
         _log("INIT", f"CC names     : {cc_count} mappings in {len(self.cc_name_sets)} set(s)")
+        tmode = "intercept" if self.intercept_mode else "passthrough"
+        _log("INIT", f"Transport    : {tmode}")
         if dest_count:
             _log("INIT", f"Destinations : {dest_count} configured")
             for dnum, dinfo in self.destinations_map.items():
@@ -594,6 +720,14 @@ class MidiPresetService:
         print(f"  Debug text    : F0 {mid:02X} {dev:02X} {CMD_DEBUG_TEXT:02X} <ascii…> F7")
         print(f"  Remote cmd    : F0 {mid:02X} {dev:02X} {CMD_REMOTE_CMD:02X} <ascii…> F7")
         print(f"  Device cmd    : F0 {mid:02X} {dev:02X} {CMD_DEVICE_CMD:02X} <ascii…> F7")
+        print()
+        print("Transport (intercept mode):")
+        print("  Play            : Direct load — next note-on recalls that preset")
+        print("  Rewind/Forward  : Navigate presets sequentially (with full recall)")
+        print("  Rec             : Increment counter")
+        print("  Stop            : Execute/clear counter")
+        print()
+        print("Device commands: ping, status, list, mode [intercept|passthrough]")
         print()
         print("Listening… (Ctrl-C to quit)")
         print()
