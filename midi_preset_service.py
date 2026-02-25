@@ -775,7 +775,7 @@ class MidiPresetService:
 
         # Note-on (velocity > 0)
         if msg.type == "note_on" and msg.velocity > 0:
-            if self.rec_counter == 1:
+            if self.intercept_mode and self.rec_counter == 1:
                 self.rec_counter = 0
                 self.preset_cursor = msg.note
                 self._save_preset_from_state(msg.note, msg.channel)
