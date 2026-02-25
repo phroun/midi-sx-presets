@@ -858,13 +858,13 @@ class MidiPresetService:
             if cc_num is None:
                 continue
             if (channel, cc_num) in self.recall_ignore:
-                _log("  --", f"CC {cc_name}({cc_num}) ch{channel + 1} = {value}  (ignored)")
+                _log("  --", f"{self._cc_label(cc_num, channel)} = {value}  (ignored)")
                 continue
             self.midi_return.send(
                 mido.Message("control_change", channel=channel, control=cc_num, value=value)
             )
             self._set_dest(cc_num, channel, value)
-            _log("  ->", f"CC {cc_name}({cc_num}) ch{channel + 1} = {value}")
+            _log("  ->", f"{self._cc_label(cc_num, channel)} = {value}")
 
     def _recall_channeled(self, preset):
         """Recall a preset with CCs grouped by channel."""
@@ -875,13 +875,13 @@ class MidiPresetService:
                 if cc_num is None:
                     continue
                 if (ch, cc_num) in self.recall_ignore:
-                    _log("  --", f"CC {cc_name}({cc_num}) ch{ch + 1} = {value}  (ignored)")
+                    _log("  --", f"{self._cc_label(cc_num, ch)} = {value}  (ignored)")
                     continue
                 self.midi_return.send(
                     mido.Message("control_change", channel=ch, control=cc_num, value=value)
                 )
                 self._set_dest(cc_num, ch, value)
-                _log("  ->", f"CC {cc_name}({cc_num}) ch{ch + 1} = {value}")
+                _log("  ->", f"{self._cc_label(cc_num, ch)} = {value}")
 
     # -- CC Mapping Engine ----------------------------------------------------
 
@@ -895,6 +895,13 @@ class MidiPresetService:
 
     def _dest_key(self, cc, channel):
         return f"{cc}_{channel}"
+
+    def _cc_label(self, cc, channel):
+        """Format a CC/channel pair with its resolved name (if known)."""
+        name = self.resolved_destinations.get((channel, cc))
+        if name:
+            return f"CC{cc} ch{channel + 1} \"{name}\""
+        return f"CC{cc} ch{channel + 1}"
 
     def _init_dest(self, cc, channel, default):
         key = self._dest_key(cc, channel)
@@ -914,10 +921,13 @@ class MidiPresetService:
 
     def _sync_all_destinations(self):
         """Re-send all current destination values (e.g. after MIDI reset)."""
+        count = 0
         for key, value in self.destination_states.items():
             parts = key.split("_")
             cc_num, channel = int(parts[0]), int(parts[1])
             self._send_cc(cc_num, channel, value)
+            count += 1
+        _log("SYNC", f"Re-sent {count} destination(s)")
 
     def _send_cc(self, cc, channel, value):
         """Send a mapped CC to hardware output."""
@@ -1065,12 +1075,14 @@ class MidiPresetService:
             self._send_cc(target_cc, target_ch, output)
 
             # Debug: show mapping result (debounced)
-            name = action.get("name", "")
+            name = (action.get("name")
+                    or self.resolved_destinations.get(
+                        (target_ch, target_cc), ""))
             dest_key = self._dest_key(target_cc, target_ch)
             line = (f"CC{source_cc} ch{src_ch_1based} "
                     f"(shift=0x{self.shift_state:04X}) → "
-                    f"CC{target_cc} ch{target_ch + 1} = {output} "
-                    f"\"{name}\"")
+                    f"CC{target_cc} ch{target_ch + 1} = {output}"
+                    + (f" \"{name}\"" if name else ""))
             self._map_log_debounced(dest_key, line)
 
     # -- Note range mapping ---------------------------------------------------
