@@ -1650,8 +1650,6 @@ class MidiPresetService:
                 self._mark_dirty()
                 self._save_preset_from_state(msg.note, msg.channel)
                 return  # Intercepted
-            if self.rec_counter > 0:
-                self.rec_counter = 0  # Any other count — cancel
             if self.load_mode:
                 self.load_mode = False
                 self.preset_cursor[msg.channel] = msg.note
