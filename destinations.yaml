@@ -5,6 +5,7 @@
 #   prefix    - prepended to inherited CC names (e.g. "ns" → "ns_pan")
 #   channels  - dict of MIDI channels (0–15), each containing:
 #     cc_group  - inherit a named set from cc_name_sets in cc_names.yaml
+#     prefix    - override the destination prefix for this channel
 #     <int>     - bare integer keys are CC overrides (not prefixed),
 #                 can shadow an inherited name
 #
@@ -21,6 +22,9 @@
 #     1:
 #       cc_group: polysynth_ccs
 #       85: nerdseq_perf_out
+#     2:
+#       cc_group: mix_ccs
+#       prefix: ns_fx
 #
 # bluebox:
 #   prefix: bb

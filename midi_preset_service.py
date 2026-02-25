@@ -177,7 +177,7 @@ class MidiPresetService:
         return {"default": default_names}, default_names
 
     _DEST_RESERVED_KEYS = {"prefix", "channels"}
-    _CH_RESERVED_KEYS   = {"cc_group"}
+    _CH_RESERVED_KEYS   = {"cc_group", "prefix"}
 
     def _load_destinations(self):
         """Load the optional destinations map (destinations.yaml).
@@ -229,11 +229,12 @@ class MidiPresetService:
                 if not isinstance(ch_cfg, dict):
                     ch_cfg = {}
 
-                # 1) Inherit from cc_group, prefixed
+                # 1) Inherit from cc_group, prefixed (channel prefix overrides dest)
+                ch_prefix = ch_cfg.get("prefix", prefix)
                 group_name = ch_cfg.get("cc_group")
                 if group_name and group_name in self.cc_name_sets:
                     for cc_num, raw_name in self.cc_name_sets[group_name].items():
-                        ch_names[int(cc_num)] = f"{prefix}_{raw_name}" if prefix else raw_name
+                        ch_names[int(cc_num)] = f"{ch_prefix}_{raw_name}" if ch_prefix else raw_name
 
                 # 2) Bare integer keys are CC overrides (not prefixed)
                 for key, value in ch_cfg.items():
