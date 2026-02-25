@@ -107,6 +107,7 @@ class MidiPresetService:
         self.cc_name_sets, self.cc_default_names = self._load_cc_names()
         self.destinations_map = self._load_destinations()
         self.presets = self._load_presets()
+        self._load_cc_mappings()
 
         # Build reverse lookups (name -> number) for each set
         self.cc_reverse_sets = {
@@ -189,6 +190,29 @@ class MidiPresetService:
             data = _yaml_load(path)
             return data.get("destinations", {})
         return {}
+
+    def _load_cc_mappings(self):
+        """Load cc_mappings.yaml — shift/joystick definitions and CC routing."""
+        path = self.config_dir / "cc_mappings.yaml"
+        if path.exists():
+            data = _yaml_load(path)
+        else:
+            data = {}
+        self.shift_defs = data.get("shift_definitions", [])
+        self.joystick_defs = data.get("joystick_definitions", [])
+        self.cc_mappings = data.get("cc_mappings", {})
+
+        # Build lookup sets for fast detection
+        self.shift_ccs = {s["cc"] for s in self.shift_defs}
+        self.joystick_ccs = set()
+        for j in self.joystick_defs:
+            self.joystick_ccs.add(j["negative_cc"])
+            self.joystick_ccs.add(j["positive_cc"])
+
+        # Runtime state for the mapping engine
+        self.shift_state = 0            # 16-bit bitmask
+        self.joystick_states = {}       # index -> {neg_held, pos_held, latch}
+        self.destination_states = {}    # "cc_ch" -> current value
 
     def _presets_dir(self):
         return self.config_dir / PRESETS_SUBDIR
@@ -510,6 +534,7 @@ class MidiPresetService:
             self.midi_return.send(
                 mido.Message("control_change", channel=channel, control=cc_num, value=value)
             )
+            self._set_dest(cc_num, channel, value)  # Sync mapping engine state
             _log("  ->", f"CC {cc_name}({cc_num}) = {value}")
 
     def _recall_multi_dest(self, preset, channel):
@@ -536,7 +561,170 @@ class MidiPresetService:
                 self.midi_return.send(
                     mido.Message("control_change", channel=channel, control=cc_num, value=value)
                 )
+                self._set_dest(cc_num, channel, value)  # Sync mapping engine state
                 _log("  ->", f"  CC {cc_name}({cc_num}) = {value}")
+
+    # -- CC Mapping Engine ----------------------------------------------------
+
+    def _decode_relative(self, value):
+        """Decode 2's complement relative value: 1-63 = positive, 65-127 = negative."""
+        if 1 <= value <= 63:
+            return value
+        if 65 <= value <= 127:
+            return -(128 - value)
+        return 0
+
+    def _dest_key(self, cc, channel):
+        return f"{cc}_{channel}"
+
+    def _init_dest(self, cc, channel, default):
+        key = self._dest_key(cc, channel)
+        if key not in self.destination_states:
+            self.destination_states[key] = default
+        return key
+
+    def _get_dest(self, cc, channel):
+        return self.destination_states.get(self._dest_key(cc, channel), 0)
+
+    def _set_dest(self, cc, channel, value, min_v=0, max_v=127):
+        key = self._dest_key(cc, channel)
+        value = max(min_v, min(max_v, value))
+        self.destination_states[key] = value
+        return value
+
+    def _sync_all_destinations(self):
+        """Re-send all current destination values (e.g. after MIDI reset)."""
+        for key, value in self.destination_states.items():
+            parts = key.split("_")
+            cc_num, channel = int(parts[0]), int(parts[1])
+            self._send_cc(cc_num, channel, value)
+
+    def _send_cc(self, cc, channel, value):
+        """Send a mapped CC to hardware output. Also captures during recording."""
+        if self.recording:
+            dd = self.dest_data.get(self.active_dest)
+            if dd is not None:
+                dd["ccs"][cc] = value
+        if self.midi_out:
+            self.midi_out.send(
+                mido.Message("control_change",
+                             channel=channel,
+                             control=cc,
+                             value=value)
+            )
+
+    def _process_shift(self, msg):
+        """Update shift bitmask if msg is a shift CC. Returns True if handled."""
+        # Channels are 1-based in config, 0-based in mido — shift CCs match
+        # by CC number only (same as original Scripter behaviour).
+        for sdef in self.shift_defs:
+            if msg.control == sdef["cc"]:
+                bit = sdef["bit"]
+                if msg.value > sdef["threshold"]:
+                    self.shift_state |= (1 << bit)
+                else:
+                    self.shift_state &= ~(1 << bit)
+                return True
+        return False
+
+    def _process_joystick(self, msg):
+        """Update joystick held/latch bits if msg is a joystick CC.
+        Returns True if the CC belongs to a joystick definition."""
+        for idx, jdef in enumerate(self.joystick_defs):
+            is_negative = msg.control == jdef["negative_cc"]
+            is_positive = msg.control == jdef["positive_cc"]
+            if not (is_negative or is_positive):
+                continue
+
+            # Initialise per-joystick state
+            if idx not in self.joystick_states:
+                self.joystick_states[idx] = {
+                    "neg_held": False, "pos_held": False, "latch": False
+                }
+            st = self.joystick_states[idx]
+
+            was_held = st["neg_held"] if is_negative else st["pos_held"]
+            is_held = msg.value > jdef["threshold"]
+
+            if is_negative:
+                st["neg_held"] = is_held
+            else:
+                st["pos_held"] = is_held
+
+            # Update "held" bits
+            if is_negative and "held_negative_bit" in jdef:
+                b = jdef["held_negative_bit"]
+                if is_held:
+                    self.shift_state |= (1 << b)
+                else:
+                    self.shift_state &= ~(1 << b)
+            if is_positive and "held_positive_bit" in jdef:
+                b = jdef["held_positive_bit"]
+                if is_held:
+                    self.shift_state |= (1 << b)
+                else:
+                    self.shift_state &= ~(1 << b)
+
+            # Latch on transition: not-held → held
+            if "latch_bit" in jdef and not was_held and is_held:
+                if is_negative:
+                    new_latch = jdef["latch_negative_on"]
+                else:
+                    new_latch = not jdef["latch_negative_on"]
+                st["latch"] = new_latch
+                lb = jdef["latch_bit"]
+                if new_latch:
+                    self.shift_state |= (1 << lb)
+                else:
+                    self.shift_state &= ~(1 << lb)
+
+            return True
+        return False
+
+    def _process_cc_mapping(self, msg):
+        """Run the CC through the mapping table. All matching actions execute."""
+        source_cc = msg.control
+        if source_cc not in self.cc_mappings:
+            return  # Unmapped CC — silently dropped
+
+        actions = self.cc_mappings[source_cc]
+        # Source channel: mido is 0-based, YAML is 1-based
+        src_ch_1based = msg.channel + 1
+
+        for action in actions:
+            # Channel filter
+            if "from_channel" in action:
+                if action["from_channel"] != src_ch_1based:
+                    continue
+
+            # Shift state match
+            masked = self.shift_state & action["mask"]
+            if masked != action["compare"]:
+                continue
+
+            # Determine target CC and channel
+            target_cc = action["cc"]
+            # Channel: YAML is 1-based, convert to 0-based for mido
+            if "channel" in action:
+                target_ch = action["channel"] - 1
+            else:
+                target_ch = msg.channel  # Keep source channel (already 0-based)
+
+            action_type = action.get("type", "absolute")
+            default_val = action.get("default", 64 if action_type == "relative" else 0)
+            min_v = action.get("min", 0)
+            max_v = action.get("max", 127)
+
+            self._init_dest(target_cc, target_ch, default_val)
+
+            if action_type == "relative":
+                delta = self._decode_relative(msg.value)
+                current = self._get_dest(target_cc, target_ch)
+                output = self._set_dest(target_cc, target_ch, current + delta, min_v, max_v)
+            else:
+                output = self._set_dest(target_cc, target_ch, msg.value, min_v, max_v)
+
+            self._send_cc(target_cc, target_ch, output)
 
     # -- Transport handling ---------------------------------------------------
 
@@ -654,23 +842,32 @@ class MidiPresetService:
             self._forward(msg)
             return
 
-        # Track CCs / PCs while recording (captured AND forwarded)
-        if self.recording:
-            dd = self.dest_data.get(self.active_dest)
-            if dd is not None:
-                if msg.type == "control_change":
-                    dd["ccs"][msg.control] = msg.value
-                    dest_tag = f" [dest {self.active_dest}]" if self.multi_dest else ""
-                    name = self._cc_num_to_name(
-                        msg.control, self.active_dest if self.multi_dest else None
-                    )
-                    _log("CC", f"{name}({msg.control}) = {msg.value}{dest_tag}")
-                elif msg.type == "program_change":
-                    dd["pc"] = msg.program
-                    dest_tag = f" [dest {self.active_dest}]" if self.multi_dest else ""
-                    _log("PC", f"program={msg.program}{dest_tag}")
+        # Control Change — process through mapping engine
+        # (matches original Scripter processing order)
+        if msg.type == "control_change":
+            # 1. Shift CCs update bitmask
+            self._process_shift(msg)
+            # 2. MIDI reset → re-send all destination values
+            if msg.control in (121, 123):
+                self._sync_all_destinations()
+            # 3. Joystick CCs update held/latch bits
+            self._process_joystick(msg)
+            # 4. Run through CC mapping table (all matching actions fire)
+            #    Mapped outputs sent via _send_cc (also captured during recording)
+            self._process_cc_mapping(msg)
+            return  # CCs never forwarded raw — only mapped outputs are sent
 
-        # Forward all non-intercepted traffic (proxy mode)
+        # Program Change — capture during recording, forward to hardware
+        if msg.type == "program_change":
+            if self.recording:
+                dd = self.dest_data.get(self.active_dest)
+                if dd is not None:
+                    dd["pc"] = msg.program
+                    _log("PC", f"program={msg.program}")
+            self._forward(msg)
+            return
+
+        # All other events (notes, pitch bend, etc.) — forward unchanged
         self._forward(msg)
 
     def _forward(self, msg):
@@ -699,6 +896,9 @@ class MidiPresetService:
         _log("INIT", f"Manufacturer : 0x{self.manufacturer_id:02X}")
         _log("INIT", f"Presets      : {len(self.presets)} loaded")
         _log("INIT", f"CC names     : {cc_count} mappings in {len(self.cc_name_sets)} set(s)")
+        action_count = sum(len(v) for v in self.cc_mappings.values())
+        _log("INIT", f"CC mappings  : {len(self.cc_mappings)} source CCs, {action_count} actions")
+        _log("INIT", f"Shift CCs    : {sorted(self.shift_ccs)} | Joystick CCs: {sorted(self.joystick_ccs)}")
         tmode = "intercept" if self.intercept_mode else "passthrough"
         _log("INIT", f"Transport    : {tmode}")
         if dest_count:
