@@ -34,3 +34,16 @@ manufacturer_id: 0x7D
 #   iac_input: "IAC Driver Bus 1"
 #   iac_return: "IAC Driver Bus 2"
 #   hardware_output: "Your MIDI Interface"
+
+# --- Recall Ignore ---------------------------------------------------------------
+#
+# Parameters listed here are saved normally but skipped during preset
+# recall, keeping their current live value.  Useful for global controls
+# like master volume that shouldn't jump when switching presets.
+#
+# Entries can be a destination parameter name (string) or an explicit
+# channel/cc pair (channel is 1-based):
+#
+# recall_ignore:
+#   - ns_to_perf_filter
+#   - {channel: 1, cc: 7}

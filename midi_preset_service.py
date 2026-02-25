@@ -106,6 +106,7 @@ class MidiPresetService:
         (self.resolved_destinations,
          self.reverse_destinations,
          self.auto_destinations) = self._resolve_destinations()
+        self.recall_ignore = self._build_recall_ignore()
         self.presets = self._load_presets()
         self._load_cc_mappings()
 
@@ -274,6 +275,35 @@ class MidiPresetService:
                     reverse[name] = (ch, cc_num)
 
         return forward, reverse, auto
+
+    def _build_recall_ignore(self):
+        """Build a set of (channel, cc_num) pairs to skip during preset recall.
+
+        Configured in config.yaml as ``recall_ignore``, a list of entries
+        that are either a parameter name (string) or a dict with
+        ``channel`` (1-based) and ``cc`` keys::
+
+            recall_ignore:
+              - ns_to_perf_filter
+              - {channel: 1, cc: 7}
+        """
+        raw = self.config.get("recall_ignore", [])
+        ignore = set()
+        for entry in raw:
+            if isinstance(entry, str):
+                target = self.reverse_destinations.get(entry)
+                if target is None:
+                    _log("WARN", f"recall_ignore: '{entry}' not found "
+                         "in destinations — skipping")
+                    continue
+                ignore.add(target)
+            elif isinstance(entry, dict) and "channel" in entry and "cc" in entry:
+                ignore.add((int(entry["channel"]) - 1, int(entry["cc"])))
+            else:
+                _log("WARN", f"recall_ignore: unrecognized entry {entry!r}")
+        if ignore:
+            _log("INIT", f"Recall ignore: {len(ignore)} parameter(s)")
+        return ignore
 
     def _load_cc_mappings(self):
         """Load cc_mappings.yaml — shift/joystick definitions and CC routing.
@@ -602,6 +632,9 @@ class MidiPresetService:
             ch, cc_num = target
             if not isinstance(value, int):
                 continue
+            if (ch, cc_num) in self.recall_ignore:
+                _log("  --", f"{key} = {value}  (ignored)")
+                continue
             self.midi_return.send(
                 mido.Message("control_change", channel=ch, control=cc_num, value=value)
             )
@@ -618,6 +651,9 @@ class MidiPresetService:
             cc_num = self._cc_name_to_number(cc_name)
             if cc_num is None:
                 continue
+            if (channel, cc_num) in self.recall_ignore:
+                _log("  --", f"CC {cc_name}({cc_num}) ch{channel + 1} = {value}  (ignored)")
+                continue
             self.midi_return.send(
                 mido.Message("control_change", channel=channel, control=cc_num, value=value)
             )
@@ -631,6 +667,9 @@ class MidiPresetService:
             for cc_name, value in ch_data.get("cc_values", {}).items():
                 cc_num = self._cc_name_to_number(cc_name)
                 if cc_num is None:
+                    continue
+                if (ch, cc_num) in self.recall_ignore:
+                    _log("  --", f"CC {cc_name}({cc_num}) ch{ch + 1} = {value}  (ignored)")
                     continue
                 self.midi_return.send(
                     mido.Message("control_change", channel=ch, control=cc_num, value=value)
