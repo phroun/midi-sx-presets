@@ -321,17 +321,17 @@ class MidiPresetService:
 
         Each top-level key is a destination identifier.  Reserved keys
         inside a destination are ``prefix`` and ``channels``.
-        ``channels`` is a dict keyed by MIDI channel number; inside each
-        channel ``cc_group`` is reserved and any bare integer key is a
-        CC override::
+        ``channels`` is a dict keyed by 1-based MIDI channel number;
+        inside each channel ``cc_group`` is reserved and any bare integer
+        key is a CC override::
 
             nerdseq:
               prefix: ns
               channels:
-                0:
+                1:
                   cc_group: mix_ccs
                   85: nerdseq_perf_out
-                1:
+                2:
                   cc_group: polysynth_ccs
         """
         path = self.config_dir / DESTINATIONS_FILENAME
@@ -367,7 +367,7 @@ class MidiPresetService:
             channels_cfg = dest_cfg.get("channels", {})
 
             for ch, ch_cfg in channels_cfg.items():
-                ch = int(ch)
+                ch = int(ch) - 1          # YAML is 1-based, internal is 0-based
                 if not isinstance(ch_cfg, dict):
                     ch_cfg = {}
 
@@ -1563,18 +1563,19 @@ class MidiPresetService:
                 channels_cfg = dest_cfg.get("channels", {})
                 ch_list = sorted(int(c) for c in channels_cfg)
                 _log("INIT", f"  {dest_id}: prefix='{prefix}', channels={ch_list}")
-                for ch in ch_list:
-                    ch_cfg = channels_cfg.get(ch, channels_cfg.get(str(ch), {}))
+                for ch_yaml in ch_list:
+                    ch_0 = ch_yaml - 1  # YAML 1-based → internal 0-based
+                    ch_cfg = channels_cfg.get(ch_yaml, channels_cfg.get(str(ch_yaml), {}))
                     group = ch_cfg.get("cc_group", "-") if isinstance(ch_cfg, dict) else "-"
                     n_overrides = sum(1 for k in (ch_cfg if isinstance(ch_cfg, dict) else {})
                                       if k not in self._CH_RESERVED_KEYS
                                       and isinstance(k, int))
                     n_resolved = sum(1 for (c, _) in self.resolved_destinations
-                                     if c == ch)
+                                     if c == ch_0)
                     parts = f"group={group}, {n_resolved} names"
                     if n_overrides:
                         parts += f" ({n_overrides} override(s))"
-                    _log("INIT", f"    ch {ch}: {parts}")
+                    _log("INIT", f"    ch {ch_yaml}: {parts}")
             # Flat resolved mapping table
             _log("INIT", "Resolved parameter map:")
             for (ch, cc_num), name in sorted(self.resolved_destinations.items()):
