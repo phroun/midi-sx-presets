@@ -27,6 +27,7 @@ var CMD_DEST_MARKER  = 0x05;
 var CMD_ABANDON      = 0x06;
 var CMD_DEBUG_TEXT    = 0x07;  // Scripter → Python console
 var CMD_REMOTE_CMD   = 0x08;  // Python CLI → Scripter
+var CMD_DEVICE_CMD   = 0x09;  // Scripter → Python service (machine-readable)
 
 // --- SysEx Helpers -----------------------------------------------------------
 
@@ -51,6 +52,14 @@ function sendDebugText(text) {
     sendSysex(CMD_DEBUG_TEXT, encoded);
 }
 
+function sendDeviceCmd(text) {
+    var encoded = [];
+    for (var i = 0; i < text.length; i++) {
+        encoded.push(Math.min(text.charCodeAt(i), 127));
+    }
+    sendSysex(CMD_DEVICE_CMD, encoded);
+}
+
 // --- Remote Command Handling -------------------------------------------------
 
 function handleIncomingSysex(event) {
@@ -61,16 +70,17 @@ function handleIncomingSysex(event) {
 
     var cmd = event.data[3];
 
+    var textBytes = [];
+    for (var i = 4; i < event.data.length; i++) {
+        if (event.data[i] === 0xF7) break;
+        textBytes.push(event.data[i]);
+    }
+    var text = "";
+    for (var i = 0; i < textBytes.length; i++) {
+        text += String.fromCharCode(textBytes[i]);
+    }
+
     if (cmd === CMD_REMOTE_CMD) {
-        var textBytes = [];
-        for (var i = 4; i < event.data.length; i++) {
-            if (event.data[i] === 0xF7) break;
-            textBytes.push(event.data[i]);
-        }
-        var text = "";
-        for (var i = 0; i < textBytes.length; i++) {
-            text += String.fromCharCode(textBytes[i]);
-        }
         handleRemoteCommand(text.trim());
     }
     // Future: handle CMD_DEST_MARKER, CMD_PRESET_NAME for recall mode

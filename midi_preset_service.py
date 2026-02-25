@@ -19,6 +19,7 @@ Protocol (SysEx, mfr 0x7D by default):
   F0 7D <dev> 06 F7            -  Abandon recording (cancel without saving)
   F0 7D <dev> 07 <ascii…> F7   -  Debug text (printed to console, supports ANSI)
   F0 7D <dev> 08 <ascii…> F7   -  Remote command (sent to device via return port)
+  F0 7D <dev> 09 <ascii…> F7   -  Device command (device → service, machine-readable)
 
 Usage:
   python midi_preset_service.py [--config-dir DIR] [--list-ports]
@@ -65,6 +66,7 @@ CMD_DEST_MARKER = 0x05   # Sent before each destination's CCs during recall
 CMD_ABANDON = 0x06        # Cancel current recording without saving
 CMD_DEBUG_TEXT = 0x07     # Arbitrary text → console (supports ANSI escapes)
 CMD_REMOTE_CMD = 0x08     # Text command sent to device via return port
+CMD_DEVICE_CMD = 0x09     # Text command from device → service (machine-readable)
 
 
 # --- YAML helpers ------------------------------------------------------------
@@ -271,6 +273,8 @@ class MidiPresetService:
             self._cmd_abandon()
         elif cmd == CMD_DEBUG_TEXT:
             self._cmd_debug_text(data[3:])
+        elif cmd == CMD_DEVICE_CMD:
+            self._cmd_device_cmd(data[3:])
 
     def _cmd_start_record(self, dest=None):
         if not self.recording:
@@ -379,6 +383,62 @@ class MidiPresetService:
             return
         text = "".join(chr(b) for b in data_bytes)
         print(f"[  DBG ] {text}")
+
+    def _cmd_device_cmd(self, data_bytes):
+        """Handle a machine-readable command from the device (Scripter)."""
+        if not data_bytes:
+            return
+        text = "".join(chr(b) for b in data_bytes)
+        # Split into command and arguments
+        parts = text.strip().split(None, 1)
+        cmd = parts[0].lower() if parts else ""
+        args = parts[1] if len(parts) > 1 else ""
+
+        handler = self._device_commands.get(cmd)
+        if handler:
+            handler(self, args)
+        else:
+            _log("DEVCMD", f"Unknown device command: '{cmd}'")
+
+    # --- Device command handlers (Scripter → service) ---
+
+    def _devcmd_ping(self, args):
+        """Respond with a pong so the device knows the service is alive."""
+        self._send_remote("pong")
+
+    def _devcmd_status(self, args):
+        """Report service status back to the device."""
+        n = len(self.presets)
+        mode = "proxy" if self.routing else "standalone"
+        rec = "recording" if self.recording else "idle"
+        self._send_remote(f"status {mode} {rec} presets={n}")
+
+    def _devcmd_list(self, args):
+        """Send back a list of stored preset slots."""
+        if not self.presets:
+            self._send_remote("list empty")
+            return
+        slots = sorted(self.presets.keys())
+        names = []
+        for s in slots:
+            name = self.presets[s].get("name", "")
+            names.append(f"{s}:{name}")
+        self._send_remote("list " + ",".join(names))
+
+    # Registry of device commands
+    _device_commands = {
+        "ping":   _devcmd_ping,
+        "status": _devcmd_status,
+        "list":   _devcmd_list,
+    }
+
+    def _send_remote(self, text):
+        """Send a CMD_REMOTE_CMD SysEx back to the device via the return port."""
+        encoded = [min(ord(c), 127) for c in text]
+        sysex_data = [self.manufacturer_id, self.device_id, CMD_REMOTE_CMD] + encoded
+        if self.midi_return:
+            self.midi_return.send(mido.Message("sysex", data=sysex_data))
+        _log("DEVCMD", f"-> {text}")
 
     # -- Recall ---------------------------------------------------------------
 
@@ -532,6 +592,8 @@ class MidiPresetService:
         print(f"  (Name reply)  : F0 {mid:02X} {dev:02X} {CMD_PRESET_NAME:02X} <ascii> F7")
         print(f"  (Dest marker) : F0 {mid:02X} {dev:02X} {CMD_DEST_MARKER:02X} <dest> F7")
         print(f"  Debug text    : F0 {mid:02X} {dev:02X} {CMD_DEBUG_TEXT:02X} <ascii…> F7")
+        print(f"  Remote cmd    : F0 {mid:02X} {dev:02X} {CMD_REMOTE_CMD:02X} <ascii…> F7")
+        print(f"  Device cmd    : F0 {mid:02X} {dev:02X} {CMD_DEVICE_CMD:02X} <ascii…> F7")
         print()
         print("Listening… (Ctrl-C to quit)")
         print()
