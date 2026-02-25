@@ -1575,6 +1575,12 @@ class MidiPresetService:
                     if n_overrides:
                         parts += f" ({n_overrides} override(s))"
                     _log("INIT", f"    ch {ch}: {parts}")
+            # Flat resolved mapping table
+            _log("INIT", "Resolved parameter map:")
+            for (ch, cc_num), name in sorted(self.resolved_destinations.items()):
+                default = self.dest_defaults.get((ch, cc_num))
+                default_str = f"  default={default}" if default is not None else ""
+                _log("INIT", f"    ch{ch + 1}/CC{cc_num:>3d}  {name}{default_str}")
 
         print()
         mid = self.manufacturer_id
