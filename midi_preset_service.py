@@ -28,6 +28,7 @@ Usage:
 import argparse
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -53,6 +54,8 @@ PRESETS_SUBDIR = "presets"
 CC_NAMES_FILENAME = "cc_names.yaml"
 CONFIG_FILENAME = "config.yaml"
 DESTINATIONS_FILENAME = "destinations.yaml"
+STATE_FILENAME = "state.yaml"
+STATE_SAVE_INTERVAL = 5  # seconds between periodic state dumps
 
 # SysEx protocol
 SYSEX_MANUFACTURER_ID = 0x7D  # Non-commercial / educational use
@@ -101,11 +104,19 @@ class MidiPresetService:
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
         self.config = self._load_or_create_config()
-        self.cc_name_sets, self.cc_default_names = self._load_cc_names()
+        (self.cc_name_sets,
+         self.cc_default_names,
+         self.cc_set_defaults) = self._load_cc_names()
         self.destinations_map = self._load_destinations()
         (self.resolved_destinations,
          self.reverse_destinations,
-         self.auto_destinations) = self._resolve_destinations()
+         self.auto_destinations,
+         self.dest_defaults) = self._resolve_destinations()
+        # Flat CC-number → default, merged from all sets (fallback when
+        # destinations aren't configured).
+        self.cc_defaults = {}
+        for defs in self.cc_set_defaults.values():
+            self.cc_defaults.update(defs)
         self.recall_ignore = self._build_recall_ignore()
         self.presets = self._load_presets()
         self._load_cc_mappings()
@@ -132,12 +143,80 @@ class MidiPresetService:
         self.rec_counter = 0         # Consecutive rec presses
         self.preset_cursor = None    # Current note for arrow navigation
 
+        # Persistent state recovery
+        self._state_dirty = False
+        self._state_stop = threading.Event()
+        self._load_state()
+
         # MIDI ports (opened in run())
         self.midi_in = None
         self.midi_out = None
         self.midi_return = None  # Recall output (= midi_out in standalone mode)
 
     # -- Config / persistence -------------------------------------------------
+
+    def _state_path(self):
+        return self.config_dir / STATE_FILENAME
+
+    def _load_state(self):
+        """Restore runtime state from the persistent state file.
+
+        Populates ``destination_states``, ``preset_cursor``,
+        ``intercept_mode``, ``shift_state``, and ``load_mode``
+        from the last saved snapshot so a restart feels seamless.
+        """
+        path = self._state_path()
+        if not path.exists():
+            return
+        data = _yaml_load(path)
+        if not isinstance(data, dict):
+            return
+        # Destination values — the core mixer state
+        saved_dests = data.get("destination_states")
+        if isinstance(saved_dests, dict):
+            self.destination_states.update(
+                {k: int(v) for k, v in saved_dests.items()
+                 if isinstance(v, (int, float))}
+            )
+        # Scalar state
+        if "preset_cursor" in data:
+            self.preset_cursor = data["preset_cursor"]
+        if "intercept_mode" in data:
+            self.intercept_mode = bool(data["intercept_mode"])
+        if "shift_state" in data:
+            self.shift_state = int(data["shift_state"])
+        n = len(self.destination_states)
+        _log("INIT", f"Restored state: {n} destinations, "
+             f"cursor={self.preset_cursor}")
+
+    def _save_state(self):
+        """Dump current runtime state to disk (atomic write)."""
+        data = {
+            "destination_states": dict(self.destination_states),
+            "preset_cursor": self.preset_cursor,
+            "intercept_mode": self.intercept_mode,
+            "shift_state": self.shift_state,
+        }
+        path = self._state_path()
+        tmp = path.with_suffix(".tmp")
+        _yaml_dump(data, tmp)
+        tmp.replace(path)
+        self._state_dirty = False
+
+    def _mark_dirty(self):
+        """Flag that state has changed and needs persisting."""
+        self._state_dirty = True
+
+    def _state_saver_loop(self):
+        """Background thread: flush dirty state periodically."""
+        interval = self.config.get("state_save_interval", STATE_SAVE_INTERVAL)
+        while not self._state_stop.is_set():
+            self._state_stop.wait(interval)
+            if self._state_dirty:
+                try:
+                    self._save_state()
+                except Exception as exc:
+                    _log("WARN", f"State save failed: {exc}")
 
     def _load_or_create_config(self):
         path = self.config_dir / CONFIG_FILENAME
@@ -151,22 +230,69 @@ class MidiPresetService:
         _yaml_dump(defaults, path)
         return defaults
 
-    def _load_cc_names(self):
-        """Load CC name mappings.  Returns (name_sets_dict, default_set).
+    @staticmethod
+    def _normalize_cc_set(raw_set):
+        """Normalise a CC name set, returning (names_dict, defaults_dict).
 
-        Supports two formats in cc_names.yaml:
-          Flat:   cc_names: {1: modulation, …}
-          Named:  cc_name_sets: {set_name: {1: modulation, …}, …}
+        Entries may be plain strings or dicts with ``name`` and optional
+        ``default``::
+
+            3: to_duck_out               # plain string, no default
+            7: {name: to_perf_filter, default: 127}   # dict with default
+        """
+        names = {}
+        defaults = {}
+        for cc_num, entry in (raw_set or {}).items():
+            cc_num = int(cc_num)
+            if isinstance(entry, dict):
+                names[cc_num] = str(entry["name"])
+                if "default" in entry:
+                    defaults[cc_num] = int(entry["default"])
+            else:
+                names[cc_num] = str(entry)
+        return names, defaults
+
+    def _load_cc_names(self):
+        """Load CC name mappings.
+
+        Returns ``(name_sets, default_names, cc_set_defaults)``.
+
+        *name_sets* and *default_names* are string-only dicts as before.
+        *cc_set_defaults* maps ``set_name → {cc_num: default_value}``
+        for entries that specified a ``default``.
+
+        Supports two YAML formats:
+
+          Flat::
+
+              cc_names:
+                1: modulation
+                7: {name: volume, default: 100}
+
+          Named sets::
+
+              cc_name_sets:
+                mix_ccs:
+                  3: to_duck_out
+                  7: {name: to_perf_filter, default: 127}
         """
         path = self.config_dir / CC_NAMES_FILENAME
         if path.exists():
             data = _yaml_load(path)
             if "cc_name_sets" in data:
-                sets = data["cc_name_sets"] or {}
-                return sets, sets.get("default", {})
+                raw_sets = data["cc_name_sets"] or {}
+                name_sets = {}
+                cc_set_defaults = {}
+                for set_name, raw_set in raw_sets.items():
+                    names, defs = self._normalize_cc_set(raw_set)
+                    name_sets[set_name] = names
+                    if defs:
+                        cc_set_defaults[set_name] = defs
+                return name_sets, name_sets.get("default", {}), cc_set_defaults
             if "cc_names" in data:
-                flat = data["cc_names"] or {}
-                return {"default": flat}, flat
+                names, defs = self._normalize_cc_set(data["cc_names"])
+                cc_set_defaults = {"default": defs} if defs else {}
+                return {"default": names}, names, cc_set_defaults
         # Create default file (flat format)
         default_names = {
             1: "modulation",
@@ -177,7 +303,7 @@ class MidiPresetService:
             74: "filter_cutoff",
         }
         _yaml_dump({"cc_names": default_names}, path)
-        return {"default": default_names}, default_names
+        return {"default": default_names}, default_names, {}
 
     _DEST_RESERVED_KEYS   = {"prefix", "channels"}
     _CH_RESERVED_KEYS     = {"cc_group", "prefix"}
@@ -217,16 +343,19 @@ class MidiPresetService:
           1. Inherit from the channel's cc_group (names prefixed).
           2. Apply bare integer-keyed overrides (not prefixed).
           3. Check for name conflicts across all destinations.
+          4. Collect per-(channel, cc) defaults from cc_set_defaults.
 
-        Returns a tuple of three flat dicts:
-          forward:  ``{(channel, cc_num): name}``
-          reverse:  ``{name: (channel, cc_num)}``
-          auto:     ``{unprefixed_name: [(channel, cc_num), ...]}``
+        Returns a tuple of four flat dicts:
+          forward:       ``{(channel, cc_num): name}``
+          reverse:       ``{name: (channel, cc_num)}``
+          auto:          ``{unprefixed_name: [(channel, cc_num), ...]}``
+          dest_defaults: ``{(channel, cc_num): default_value}``
         Logs warnings for every conflict found.
         """
-        forward = {}   # (ch, cc_num) -> name
-        reverse = {}   # name -> (ch, cc_num)
-        auto    = {}   # unprefixed_name -> [(ch, cc_num), ...]
+        forward  = {}   # (ch, cc_num) -> name
+        reverse  = {}   # name -> (ch, cc_num)
+        auto     = {}   # unprefixed_name -> [(ch, cc_num), ...]
+        defaults = {}   # (ch, cc_num) -> default value
         for dest_id, dest_cfg in self.destinations_map.items():
             prefix = dest_cfg.get("prefix", "")
             channels_cfg = dest_cfg.get("channels", {})
@@ -240,12 +369,17 @@ class MidiPresetService:
                 ch_prefix = ch_cfg.get("prefix", prefix)
                 group_name = ch_cfg.get("cc_group")
                 ch_names = {}
+                group_defaults = (self.cc_set_defaults.get(group_name, {})
+                                  if group_name else {})
                 if group_name and group_name in self.cc_name_sets:
                     for cc_num, raw_name in self.cc_name_sets[group_name].items():
                         cc_num = int(cc_num)
                         ch_names[cc_num] = f"{ch_prefix}_{raw_name}" if ch_prefix else raw_name
                         # auto map: unprefixed name → all (ch, cc) targets
                         auto.setdefault(raw_name, []).append((ch, cc_num))
+                        # Propagate default from cc_name_set
+                        if cc_num in group_defaults:
+                            defaults[(ch, cc_num)] = group_defaults[cc_num]
 
                 # 2) Bare integer keys are CC overrides (not prefixed)
                 for key, value in ch_cfg.items():
@@ -274,7 +408,9 @@ class MidiPresetService:
                              f"and ch{ch}/CC{cc_num}")
                     reverse[name] = (ch, cc_num)
 
-        return forward, reverse, auto
+        if defaults:
+            _log("INIT", f"CC defaults from cc_names: {len(defaults)} entries")
+        return forward, reverse, auto, defaults
 
     def _build_recall_ignore(self):
         """Build a set of (channel, cc_num) pairs to skip during preset recall.
@@ -572,6 +708,7 @@ class MidiPresetService:
         mode_name = "intercept" if self.intercept_mode else "passthrough"
         self.rec_counter = 0
         self.load_mode = False
+        self._mark_dirty()
         _log("MODE", f"Transport mode: {mode_name}")
         self._send_remote(f"mode {mode_name}")
 
@@ -703,6 +840,7 @@ class MidiPresetService:
         key = self._dest_key(cc, channel)
         value = max(min_v, min(max_v, value))
         self.destination_states[key] = value
+        self._mark_dirty()
         return value
 
     def _sync_all_destinations(self):
@@ -835,7 +973,14 @@ class MidiPresetService:
                 target_ch = msg.channel  # Keep source channel (already 0-based)
 
             action_type = action.get("type", "absolute")
-            default_val = action.get("default", 64 if action_type == "relative" else 0)
+            if "default" in action:
+                default_val = action["default"]
+            elif (target_ch, target_cc) in self.dest_defaults:
+                default_val = self.dest_defaults[(target_ch, target_cc)]
+            elif target_cc in self.cc_defaults:
+                default_val = self.cc_defaults[target_cc]
+            else:
+                default_val = 64 if action_type == "relative" else 0
             min_v = action.get("min", 0)
             max_v = action.get("max", 127)
 
@@ -893,6 +1038,7 @@ class MidiPresetService:
             if self.rec_counter >= 3:
                 self.rec_counter = 0
                 self.intercept_mode = False
+                self._mark_dirty()
                 _log("MODE", "Switched to PASS-THROUGH mode")
             elif self.rec_counter == 0:
                 self.load_mode = True
@@ -905,6 +1051,7 @@ class MidiPresetService:
             if self.rec_counter >= 3:
                 self.rec_counter = 0
                 self.intercept_mode = False
+                self._mark_dirty()
                 _log("MODE", "Switched to PASS-THROUGH mode")
                 return
             if self.load_mode:
@@ -938,6 +1085,7 @@ class MidiPresetService:
             self.rec_counter = 0
             if counter >= 3:
                 self.intercept_mode = True
+                self._mark_dirty()
                 _log("MODE", "Switched to INTERCEPT mode")
             # Play is also forwarded to hardware (handled by caller)
 
@@ -946,6 +1094,7 @@ class MidiPresetService:
             self.rec_counter = 0
             if counter >= 3:
                 self.intercept_mode = True
+                self._mark_dirty()
                 _log("MODE", "Switched to INTERCEPT mode")
             # Stop is also forwarded to hardware (handled by caller)
 
@@ -964,6 +1113,7 @@ class MidiPresetService:
 
         idx = idx % len(slots)
         self.preset_cursor = slots[idx]
+        self._mark_dirty()
         _log("NAV", f"Preset {self.preset_cursor} (slot {idx + 1}/{len(slots)})")
         self._recall_preset(self.preset_cursor)
 
@@ -991,11 +1141,13 @@ class MidiPresetService:
             if self.intercept_mode and self.rec_counter == 1:
                 self.rec_counter = 0
                 self.preset_cursor = msg.note
+                self._mark_dirty()
                 self._save_preset_from_state(msg.note, msg.channel)
                 return  # Intercepted
             if self.load_mode:
                 self.load_mode = False
                 self.preset_cursor = msg.note  # Track for arrow navigation
+                self._mark_dirty()
                 self._recall_preset(msg.note)
                 return  # Intercepted
             self._forward(msg)
@@ -1054,6 +1206,9 @@ class MidiPresetService:
         _log("INIT", f"Shift CCs    : {sorted(self.shift_ccs)} | Joystick CCs: {sorted(self.joystick_ccs)}")
         tmode = "intercept" if self.intercept_mode else "passthrough"
         _log("INIT", f"Transport    : {tmode}")
+        save_int = self.config.get("state_save_interval", STATE_SAVE_INTERVAL)
+        _log("INIT", f"State file   : {self._state_path()} "
+             f"(save every {save_int}s)")
         if dest_count:
             _log("INIT", f"Destinations : {dest_count} configured, "
                  f"{len(self.resolved_destinations)} resolved names")
@@ -1098,6 +1253,11 @@ class MidiPresetService:
         print("Listening… (Ctrl-C to quit)")
         print()
 
+        # Start background state saver
+        self._state_stop.clear()
+        saver = threading.Thread(target=self._state_saver_loop, daemon=True)
+        saver.start()
+
         try:
             if self.routing:
                 self.midi_in = mido.open_input(self.routing["iac_input"])
@@ -1118,6 +1278,14 @@ class MidiPresetService:
             _log("ERROR", "Make sure python-rtmidi is installed:  pip install python-rtmidi")
             sys.exit(1)
         finally:
+            self._state_stop.set()
+            saver.join(timeout=2)
+            # Final state flush
+            try:
+                self._save_state()
+                _log("STATE", "State saved.")
+            except Exception as exc:
+                _log("WARN", f"Final state save failed: {exc}")
             if self.midi_in:
                 self.midi_in.close()
             if self.midi_out:

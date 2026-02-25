@@ -47,3 +47,13 @@ manufacturer_id: 0x7D
 # recall_ignore:
 #   - ns_to_perf_filter
 #   - {channel: 1, cc: 7}
+
+# --- Persistent State -----------------------------------------------------------
+#
+# The service periodically saves all destination values, the current
+# preset cursor, and mode flags to state.yaml so it can recover
+# seamlessly after a crash or restart.  Defaults are only used for
+# parameters not yet seen in the state file.
+#
+# Interval in seconds between state dumps (0 to disable).
+# state_save_interval: 5

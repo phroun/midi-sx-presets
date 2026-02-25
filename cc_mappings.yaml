@@ -22,6 +22,16 @@
 #   absolute - output value = input value (clamped to min/max)
 #   relative - input is 2's complement delta (+1..+63 / -1..-63),
 #              accumulated on destination state per (cc, channel) pair
+#
+# Default values (fallback order):
+#   1. Explicit "default:" in the action below
+#   2. Per-(channel,cc) default from destinations + cc_names
+#   3. Per-cc default from cc_names (any set)
+#   4. 64 for relative, 0 for absolute
+#
+# Actions targeting a named CC can omit "default:" when the cc_names
+# canonical default is correct.  Keep "default:" for per-channel
+# overrides (e.g. loop sends that start at 127).
 
 shift_definitions:
   - cc: 80       # Shift 1 - controls bit 0
@@ -67,17 +77,17 @@ cc_mappings:
 
   # ---- Control Pads - always send to same CC regardless of shift state ----
   16:
-    - {mask: 0, compare: 0, type: absolute, cc: 9, default: 0, channel: 14, name: "Loop Reset"}
+    - {mask: 0, compare: 0, type: absolute, cc: 9, channel: 14, name: "Loop Reset"}
   17:
     - {mask: 0x0080, compare: 0x0000, type: absolute, cc: 10, default: 0, channel: 14, name: "Loop A Retrig"}
-    - {mask: 0x0080, compare: 0x0080, type: absolute, cc: 13, default: 0, channel: 14, name: "Loop B Retrig"}
+    - {mask: 0x0080, compare: 0x0080, type: absolute, cc: 13, channel: 14, name: "Loop B Retrig"}
     - {mask: 0, compare: 0, type: absolute, cc: 0, default: 0, channel: 15, name: "No Pass"}
   18:
-    - {mask: 0x0080, compare: 0x0000, type: absolute, cc: 11, default: 0, channel: 14, name: "Loop A Record"}
+    - {mask: 0x0080, compare: 0x0000, type: absolute, cc: 11, channel: 14, name: "Loop A Record"}
     - {mask: 0x0080, compare: 0x0080, type: absolute, cc: 14, default: 0, channel: 14, name: "Loop B Record"}
     - {mask: 0, compare: 0, type: absolute, cc: 0, default: 0, channel: 15, name: "No Pass"}
   19:
-    - {mask: 0x0080, compare: 0x0000, type: absolute, cc: 12, default: 0, channel: 14, name: "Loop A Erase"}
+    - {mask: 0x0080, compare: 0x0000, type: absolute, cc: 12, channel: 14, name: "Loop A Erase"}
     - {mask: 0x0080, compare: 0x0080, type: absolute, cc: 15, default: 0, channel: 14, name: "Loop B Erase"}
     - {mask: 0, compare: 0, type: absolute, cc: 0, default: 0, channel: 15, name: "No Pass"}
 
@@ -112,19 +122,19 @@ cc_mappings:
     # Solo, Unshifted = Bass Filter
     - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 3, default: 127, channel: 5, name: "To Dry Out"}
     # Solo, GreenShift = Raw Mono
-    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 3, default: 0, channel: 1, name: "To Dry Out"}
+    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 3, channel: 1, name: "To Dry Out"}
     # Poly, Unshifted = Raw Poly
     - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 3, default: 0, name: "To Dry Out"}
     # Poly, TealShift = Perform Filter
     - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 3, default: 127, channel: 11, name: "To Dry Out"}
     # Loop A to Dry Out:
-    - {mask: 0x008C, compare: 0x0004, type: relative, cc: 3, default: 0, channel: 3, name: "Loop A to Dry Out"}  # Vert-Dn Shift + "A"
-    - {mask: 0x008C, compare: 0x0008, type: relative, cc: 3, default: 0, channel: 3, name: "Loop A to Dry Out"}  # Vert-Up Shift + "A"
-    - {mask: 0x0060, compare: 0x0020, type: relative, cc: 3, default: 0, channel: 3, name: "Loop A to Dry Out"}  # Vert-Lf Shift + "A"
+    - {mask: 0x008C, compare: 0x0004, type: relative, cc: 3, channel: 3, name: "Loop A to Dry Out"}  # Vert-Dn Shift + "A"
+    - {mask: 0x008C, compare: 0x0008, type: relative, cc: 3, channel: 3, name: "Loop A to Dry Out"}  # Vert-Up Shift + "A"
+    - {mask: 0x0060, compare: 0x0020, type: relative, cc: 3, channel: 3, name: "Loop A to Dry Out"}  # Vert-Lf Shift + "A"
     # Loop B to Dry Out:
-    - {mask: 0x008C, compare: 0x0084, type: relative, cc: 3, default: 0, channel: 4, name: "Loop B to Dry Out"}  # Vert-Dn Shift + "B"
-    - {mask: 0x008C, compare: 0x0088, type: relative, cc: 3, default: 0, channel: 4, name: "Loop B to Dry Out"}  # Vert-Up Shift + "B"
-    - {mask: 0x0060, compare: 0x0040, type: relative, cc: 3, default: 0, channel: 4, name: "Loop B to Dry Out"}  # Vert-Rt Shift + "B"
+    - {mask: 0x008C, compare: 0x0084, type: relative, cc: 3, channel: 4, name: "Loop B to Dry Out"}  # Vert-Dn Shift + "B"
+    - {mask: 0x008C, compare: 0x0088, type: relative, cc: 3, channel: 4, name: "Loop B to Dry Out"}  # Vert-Up Shift + "B"
+    - {mask: 0x0060, compare: 0x0040, type: relative, cc: 3, channel: 4, name: "Loop B to Dry Out"}  # Vert-Rt Shift + "B"
     # PWM Rate:
     - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 89, default: 64, name: "PWM Rate"}  # Poly, BlueShift = FX
     # Attack:
@@ -152,17 +162,17 @@ cc_mappings:
 
   72:  # K3
     # To DSP:
-    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 11, default: 0, channel: 5, name: "To DSP"}  # Mono, Unshifted = Bass Filter
-    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 11, default: 0, channel: 1, name: "To DSP"}  # Mono, GreenShift = Raw Mono
+    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 11, channel: 5, name: "To DSP"}  # Mono, Unshifted = Bass Filter
+    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 11, channel: 1, name: "To DSP"}  # Mono, GreenShift = Raw Mono
     - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 11, default: 0, name: "To DSP"}  # Poly, Unshited = Raw Poly
-    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 11, default: 0, channel: 11, name: "To DSP"}  # Poly, TealShifted = Peformance Filter
+    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 11, channel: 11, name: "To DSP"}  # Poly, TealShifted = Peformance Filter
     # Loop to Loop:
     - {mask: 0x0060, compare: 0x0020, type: relative, cc: 103, default: 127, channel: 3, name: "To Loop B"}  # "A", Poly, Unshifted
     - {mask: 0x0060, compare: 0x0040, type: relative, cc: 103, default: 127, channel: 4, name: "To Loop B"}  # "B", Poly, Unshifted
     # Loop A to DSP:
-    - {mask: 0x0088, compare: 0x0008, type: relative, cc: 11, default: 0, channel: 3, name: "Loop A to DSP"}  # Vertical Shift + "A"
+    - {mask: 0x0088, compare: 0x0008, type: relative, cc: 11, channel: 3, name: "Loop A to DSP"}  # Vertical Shift + "A"
     # Loop B to DSP:
-    - {mask: 0x0088, compare: 0x0088, type: relative, cc: 11, default: 0, channel: 4, name: "Loop B to DSP"}  # Vertical Shift + "B"
+    - {mask: 0x0088, compare: 0x0088, type: relative, cc: 11, channel: 4, name: "Loop B to DSP"}  # Vertical Shift + "B"
     # Tremolo Rate:
     - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 86, default: 64, name: "Tremolo Rate"}  # Poly, BlueShift
     # Sustain:
@@ -170,10 +180,10 @@ cc_mappings:
 
   73:  # K4
     # Volume To Perform:
-    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 7, default: 0, channel: 5, name: "Vol to Perform"}  # Mono, Unshifted = Bass Filter
-    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 7, default: 0, channel: 1, name: "Vol to Perform"}  # Mono, GreenShifted = Raw Mono
+    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 7, channel: 5, name: "Vol to Perform"}  # Mono, Unshifted = Bass Filter
+    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 7, channel: 1, name: "Vol to Perform"}  # Mono, GreenShifted = Raw Mono
     - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 7, default: 127, name: "Vol to Perform"}  # Poly, Unshifted = Raw Poly
-    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 71, default: 0, channel: 14, name: "Wave Morph"}  # Poly, TealShifted (Wave Morph)
+    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 71, channel: 14, name: "Wave Morph"}  # Poly, TealShifted (Wave Morph)
     # Loop A to Perform:
     - {mask: 0x00EC, compare: 0x0004, type: relative, cc: 7, default: 127, channel: 3, name: "Loop A to Peform"}  # Vert-Dn Shift + "A"
     - {mask: 0x00EC, compare: 0x0008, type: relative, cc: 7, default: 127, channel: 3, name: "Loop A to Peform"}  # Vert-Up Shift + "A"
@@ -183,22 +193,22 @@ cc_mappings:
     - {mask: 0x00EC, compare: 0x0088, type: relative, cc: 7, default: 127, channel: 4, name: "Loop B to Peform"}  # Vert-Up Shift + "B"
     - {mask: 0x0060, compare: 0x0040, type: relative, cc: 7, default: 127, channel: 4, name: "Loop B to Peform"}  # Vert-Rt Shift + "B"
     # Wah Amount:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 87, channel: 2, default: 64, name: "Wah Amount"}  # Poly, BlueShift
+    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 87, channel: 2, name: "Wah Amount"}  # Poly, BlueShift
     # Release:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 77, channel: 2, default: 0, name: "Amp-Release"}  # Poly, GreenShift = Envelopes
+    - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 77, channel: 2, name: "Amp-Release"}  # Poly, GreenShift = Envelopes
 
   74:  # K5
     # Stereo Pan:
-    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 10, default: 64, channel: 5, name: "Stereo1b Pan"}  # Mono, Unshifted = Bass Filter
-    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 10, default: 64, channel: 1, name: "Stereo1r Pan"}  # Mono, GreenShifted = Raw Mono
+    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 10, channel: 5, name: "Stereo1b Pan"}  # Mono, Unshifted = Bass Filter
+    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 10, channel: 1, name: "Stereo1r Pan"}  # Mono, GreenShifted = Raw Mono
     - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 10, default: 64, name: "Stereo2r Pan"}  # Poly, Unshifted = Raw Poly
-    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 10, default: 64, channel: 11, name: "Stereo2p Pan"}  # Poly, TealShifted = Performance Filter
+    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 10, channel: 11, name: "Stereo2p Pan"}  # Poly, TealShifted = Performance Filter
     # Loop A Stereo Pan
-    - {mask: 0x00EC, compare: 0x0004, type: relative, cc: 10, default: 64, channel: 3, name: "Loop A Stereo Pan"}  # Vert-Dn Shift + "A"
-    - {mask: 0x00EC, compare: 0x0008, type: relative, cc: 10, default: 64, channel: 3, name: "Loop A Stereo Pan"}  # Vert-Up Shift + "A"
+    - {mask: 0x00EC, compare: 0x0004, type: relative, cc: 10, channel: 3, name: "Loop A Stereo Pan"}  # Vert-Dn Shift + "A"
+    - {mask: 0x00EC, compare: 0x0008, type: relative, cc: 10, channel: 3, name: "Loop A Stereo Pan"}  # Vert-Up Shift + "A"
     # Loop B Stereo Pan
-    - {mask: 0x00EC, compare: 0x0084, type: relative, cc: 10, default: 64, channel: 4, name: "Loop B Stereo Pan"}  # Vert-Up Shift + "B"
-    - {mask: 0x00EC, compare: 0x0088, type: relative, cc: 10, default: 64, channel: 4, name: "Loop B Stereo Pan"}  # Vert-Dn Shift + "B"
+    - {mask: 0x00EC, compare: 0x0084, type: relative, cc: 10, channel: 4, name: "Loop B Stereo Pan"}  # Vert-Up Shift + "B"
+    - {mask: 0x00EC, compare: 0x0088, type: relative, cc: 10, channel: 4, name: "Loop B Stereo Pan"}  # Vert-Dn Shift + "B"
     # Loop A Speed:
     - {mask: 0x0068, compare: 0x0020, type: relative, cc: 1, default: 64, channel: 14, name: "Loop A Speed"}  # Holding "A"
     # Loop B Speed:
@@ -210,16 +220,16 @@ cc_mappings:
 
   75:  # K6
     # To FX1
-    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 90, default: 0, channel: 5, name: "To FX1"}  # Mono, Unshifted = Bass Filter
-    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 90, default: 0, channel: 1, name: "To FX1"}  # Mono, GreenShifted = Raw Mono
+    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 90, channel: 5, name: "To FX1"}  # Mono, Unshifted = Bass Filter
+    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 90, channel: 1, name: "To FX1"}  # Mono, GreenShifted = Raw Mono
     - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 90, default: 0, name: "To FX1"}  # Poly, Unshifted = Raw Poly
-    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 90, default: 0, channel: 11, name: "To FX1"}  # Poly, TealShifted = Performance Filter
+    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 90, channel: 11, name: "To FX1"}  # Poly, TealShifted = Performance Filter
     # Loop A to FX1:
-    - {mask: 0x008C, compare: 0x0004, type: relative, cc: 90, default: 0, channel: 3, name: "Loop A to FX1"}  # Vert-Up Shift + "A"
-    - {mask: 0x008C, compare: 0x0008, type: relative, cc: 90, default: 0, channel: 3, name: "Loop A to FX1"}  # Vert-Dn Shift + "A"
+    - {mask: 0x008C, compare: 0x0004, type: relative, cc: 90, channel: 3, name: "Loop A to FX1"}  # Vert-Up Shift + "A"
+    - {mask: 0x008C, compare: 0x0008, type: relative, cc: 90, channel: 3, name: "Loop A to FX1"}  # Vert-Dn Shift + "A"
     # Loop B to FX1:
-    - {mask: 0x008C, compare: 0x0084, type: relative, cc: 90, default: 0, channel: 4, name: "Loop B to FX1"}  # Vert-Up Shift + "B"
-    - {mask: 0x008C, compare: 0x0088, type: relative, cc: 90, default: 0, channel: 4, name: "Loop B to FX1"}  # Vert-Dn Shift + "B"
+    - {mask: 0x008C, compare: 0x0084, type: relative, cc: 90, channel: 4, name: "Loop B to FX1"}  # Vert-Up Shift + "B"
+    - {mask: 0x008C, compare: 0x0088, type: relative, cc: 90, channel: 4, name: "Loop B to FX1"}  # Vert-Dn Shift + "B"
     # Loop A Length:
     - {mask: 0x0068, compare: 0x0020, type: relative, cc: 2, default: 127, channel: 14, name: "Loop A Length"}  # Holding "A"
     # Loop B Length:
@@ -231,18 +241,18 @@ cc_mappings:
 
   76:  # K7
     # To FX2:
-    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 91, default: 0, channel: 5, name: "To FX2"}  # Mono, Unshifted = Bass Filter
-    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 91, default: 0, channel: 1, name: "To FX2"}  # Mono, GreenShifted = Raw Mono
+    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 91, channel: 5, name: "To FX2"}  # Mono, Unshifted = Bass Filter
+    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 91, channel: 1, name: "To FX2"}  # Mono, GreenShifted = Raw Mono
     - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 91, default: 0, name: "To FX2"}  # Poly, Unshifted = Raw Poly
-    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 91, default: 0, channel: 11, name: "To FX2"}  # Poly, TealShifted = Performance Filter
+    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 91, channel: 11, name: "To FX2"}  # Poly, TealShifted = Performance Filter
     # Loop A to FX2:
-    - {mask: 0x008C, compare: 0x0004, type: relative, cc: 91, default: 0, channel: 3, name: "Loop A to FX2"}  # Vert-Up Shift + "A"
-    - {mask: 0x008C, compare: 0x0008, type: relative, cc: 91, default: 0, channel: 3, name: "Loop A to FX2"}  # Vert-Dn Shift + "A"
+    - {mask: 0x008C, compare: 0x0004, type: relative, cc: 91, channel: 3, name: "Loop A to FX2"}  # Vert-Up Shift + "A"
+    - {mask: 0x008C, compare: 0x0008, type: relative, cc: 91, channel: 3, name: "Loop A to FX2"}  # Vert-Dn Shift + "A"
     # Loop B to FX2:
-    - {mask: 0x008C, compare: 0x0084, type: relative, cc: 91, default: 0, channel: 4, name: "Loop B to FX2"}  # Vert-Up Shift + "B"
-    - {mask: 0x008C, compare: 0x0088, type: relative, cc: 91, default: 0, channel: 4, name: "Loop B to FX2"}  # Vert-Dn Shift + "B"
+    - {mask: 0x008C, compare: 0x0084, type: relative, cc: 91, channel: 4, name: "Loop B to FX2"}  # Vert-Up Shift + "B"
+    - {mask: 0x008C, compare: 0x0088, type: relative, cc: 91, channel: 4, name: "Loop B to FX2"}  # Vert-Dn Shift + "B"
     # Loop A Position:
-    - {mask: 0x0068, compare: 0x0020, type: relative, cc: 3, default: 0, channel: 14, name: "Loop A Position"}  # Holding "A"
+    - {mask: 0x0068, compare: 0x0020, type: relative, cc: 3, channel: 14, name: "Loop A Position"}  # Holding "A"
     # Loop B Position:
     - {mask: 0x0068, compare: 0x0040, type: relative, cc: 6, default: 0, channel: 14, name: "Loop B Position"}  # Holding "B"
     # Tremolo Amount:
@@ -264,9 +274,9 @@ cc_mappings:
     - {mask: 0x008C, compare: 0x0088, type: relative, cc: 103, default: 0, channel: 11, name: "Perform to Loop B"}  # Vertical Shift + "B"
     - {mask: 0x0060, compare: 0x0040, type: relative, cc: 103, default: 0, channel: 11, name: "Perform to Loop B"}  # Vertical Shift + "B"
     # Wah Amount:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 93, default: 64, channel: 14, name: "Wah Amount"}  # Poly, BlueShift
+    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 93, channel: 14, name: "Wah Amount"}  # Poly, BlueShift
     # Filter Release:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 72, default: 32, channel: 14, name: "F-Release"}  # Poly, GreenShift = Envelopes
+    - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 72, channel: 14, name: "F-Release"}  # Poly, GreenShift = Envelopes
 
   # ---- Transport CCs (115-119) -------------------------------------------
   # Handled by the Python transport system before reaching the mapping engine.
