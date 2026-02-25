@@ -1,20 +1,33 @@
 # Destination Map (optional)
 #
-# Defines logical "destinations" that group CCs within a single preset.
-# Each destination can reference a named CC-name set from cc_names.yaml
-# (using the cc_name_sets format).  If omitted, the default set is used.
+# Defines logical "destinations" — named groups of MIDI channels with
+# human-readable CC names derived from cc_name_sets in cc_names.yaml.
 #
-# During recording, the SysEx START_RECORD command includes a destination
-# byte to select which destination receives subsequent CCs.  On recall,
-# a SysEx destination marker is sent before each group so the receiver
-# knows which CCs belong where.
+# Each destination has:
+#   prefix     - prepended to inherited CC names (e.g. prefix "ns" turns
+#                "pan" into "ns_pan").  Keeps names unique across destinations.
+#   channels   - a dict of MIDI channels (0–15).  Each channel can:
+#     cc_group   - inherit a named set from cc_name_sets (names get prefixed)
+#     overrides  - define additional CC names (by number) that are NOT
+#                  prefixed, or shadow an inherited name with a new one.
 #
+# Conflict detection: if two different (channel, CC) pairs resolve to the
+# same name within one destination, a warning is logged at startup.
+
 # Example (uncomment and customise for your setup):
 #
 # destinations:
-#   0:
-#     name: NerdSeq
-#     cc_names: nerdseq_ccs
-#   1:
-#     name: BlueBox
-#     cc_names: bluebox_ccs
+#   nerdseq:
+#     prefix: ns
+#     channels:
+#       0:
+#         cc_group: mix_ccs
+#       1:
+#         cc_group: polysynth_ccs
+#         overrides:
+#           85: nerdseq_perf_out
+#   bluebox:
+#     prefix: bb
+#     channels:
+#       2:
+#         cc_group: mix_ccs
