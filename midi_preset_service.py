@@ -28,6 +28,7 @@ Usage:
 import argparse
 import signal
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -213,6 +214,7 @@ class MidiPresetService:
         self.shift_state = 0            # 16-bit bitmask
         self.joystick_states = {}       # index -> {neg_held, pos_held, latch}
         self.destination_states = {}    # "cc_ch" -> current value
+        self._map_log_times = {}        # "cc_ch" -> last log timestamp (debounce)
 
     def _presets_dir(self):
         return self.config_dir / PRESETS_SUBDIR
@@ -620,10 +622,13 @@ class MidiPresetService:
         for sdef in self.shift_defs:
             if msg.control == sdef["cc"]:
                 bit = sdef["bit"]
+                old = self.shift_state
                 if msg.value > sdef["threshold"]:
                     self.shift_state |= (1 << bit)
                 else:
                     self.shift_state &= ~(1 << bit)
+                if self.shift_state != old:
+                    _log("SHIFT", f"CC{msg.control} bit{bit} → 0x{self.shift_state:04X}")
                 return True
         return False
 
@@ -652,6 +657,7 @@ class MidiPresetService:
                 st["pos_held"] = is_held
 
             # Update "held" bits
+            old = self.shift_state
             if is_negative and "held_negative_bit" in jdef:
                 b = jdef["held_negative_bit"]
                 if is_held:
@@ -678,8 +684,41 @@ class MidiPresetService:
                 else:
                     self.shift_state &= ~(1 << lb)
 
+            if self.shift_state != old:
+                _log("JOY", f"CC{msg.control} → 0x{self.shift_state:04X}")
             return True
         return False
+
+    def _cc_preset_info(self, cc_num):
+        """Show where a CC would be stored across all name sets and destinations."""
+        hits = []
+        seen_sets = set()
+        # Check destination-specific sets first
+        for dest_num, dest_info in self.destinations_map.items():
+            set_name = dest_info.get("cc_names", "default")
+            name_set = self.cc_name_sets.get(set_name, {})
+            if cc_num in name_set:
+                dname = dest_info.get("name", f"dest{dest_num}")
+                hits.append(f"{name_set[cc_num]} @{dname}")
+                seen_sets.add(set_name)
+        # Check all remaining name sets (no destination attached)
+        for set_name, name_set in self.cc_name_sets.items():
+            if set_name in seen_sets:
+                continue
+            if cc_num in name_set:
+                hits.append(f"{name_set[cc_num]} [{set_name}]")
+        return ", ".join(hits) if hits else None
+
+    def _map_log_debounced(self, key, line1, line2=None):
+        """Log mapping debug output, debounced to once per second per key."""
+        now = time.monotonic()
+        last = self._map_log_times.get(key, 0)
+        if now - last < 1.0:
+            return
+        self._map_log_times[key] = now
+        _log("MAP", line1)
+        if line2:
+            _log("", line2)
 
     def _process_cc_mapping(self, msg):
         """Run the CC through the mapping table. All matching actions execute."""
@@ -725,6 +764,17 @@ class MidiPresetService:
                 output = self._set_dest(target_cc, target_ch, msg.value, min_v, max_v)
 
             self._send_cc(target_cc, target_ch, output)
+
+            # Debug: show mapping result + preset destination (debounced)
+            name = action.get("name", "")
+            dest_key = self._dest_key(target_cc, target_ch)
+            preset_info = self._cc_preset_info(target_cc)
+            line1 = (f"CC{source_cc} ch{src_ch_1based} "
+                     f"(shift=0x{self.shift_state:04X}) → "
+                     f"CC{target_cc} ch{target_ch + 1} = {output} "
+                     f"\"{name}\"")
+            line2 = f"  ↳ preset: {preset_info}" if preset_info else None
+            self._map_log_debounced(dest_key, line1, line2)
 
     # -- Transport handling ---------------------------------------------------
 
