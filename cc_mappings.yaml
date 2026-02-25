@@ -25,11 +25,11 @@
 #
 # Default values (fallback order):
 #   1. Explicit "default:" in the action below
-#   2. Per-(channel,cc) default from destinations + cc_names
-#   3. Per-cc default from cc_names (any set)
+#   2. Per-(channel,cc) default from destinations + cc_sets
+#   3. Per-cc default from cc_sets (any set)
 #   4. 64 for relative, 0 for absolute
 #
-# Actions targeting a named CC can omit "default:" when the cc_names
+# Actions targeting a named CC can omit "default:" when the cc_sets
 # canonical default is correct.  Keep "default:" for per-channel
 # overrides (e.g. loop sends that start at 127).
 

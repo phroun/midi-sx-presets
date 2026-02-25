@@ -51,7 +51,7 @@ except ImportError:
 
 DEFAULT_CONFIG_DIR = Path.home() / ".midi-sx-presets"
 PRESETS_SUBDIR = "presets"
-CC_NAMES_FILENAME = "cc_names.yaml"
+CC_SETS_FILENAME = "cc_sets.yaml"
 CONFIG_FILENAME = "config.yaml"
 DESTINATIONS_FILENAME = "destinations.yaml"
 STATE_FILENAME = "state.yaml"
@@ -104,9 +104,9 @@ class MidiPresetService:
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
         self.config = self._load_or_create_config()
-        (self.cc_name_sets,
-         self.cc_default_names,
-         self.cc_set_defaults) = self._load_cc_names()
+        (self.cc_sets,
+         self.cc_default_set,
+         self.cc_set_defaults) = self._load_cc_sets()
         self.destinations_map = self._load_destinations()
         (self.resolved_destinations,
          self.reverse_destinations,
@@ -124,9 +124,9 @@ class MidiPresetService:
         # Build reverse lookups (name -> number) for each set
         self.cc_reverse_sets = {
             name: {v: k for k, v in mapping.items()}
-            for name, mapping in self.cc_name_sets.items()
+            for name, mapping in self.cc_sets.items()
         }
-        self.cc_reverse_default = {v: k for k, v in self.cc_default_names.items()}
+        self.cc_reverse_default = {v: k for k, v in self.cc_default_set.items()}
 
         # Protocol IDs (configurable via config.yaml)
         self.manufacturer_id = self.config.get("manufacturer_id", SYSEX_MANUFACTURER_ID)
@@ -252,7 +252,7 @@ class MidiPresetService:
                 names[cc_num] = str(entry)
         return names, defaults
 
-    def _load_cc_names(self):
+    def _load_cc_sets(self):
         """Load CC name mappings.
 
         Returns ``(name_sets, default_names, cc_set_defaults)``.
@@ -265,34 +265,40 @@ class MidiPresetService:
 
           Flat::
 
-              cc_names:
+              cc_sets:
                 1: modulation
                 7: {name: volume, default: 100}
 
           Named sets::
 
-              cc_name_sets:
+              cc_sets:
                 mix_ccs:
                   3: to_duck_out
                   7: {name: to_perf_filter, default: 127}
         """
-        path = self.config_dir / CC_NAMES_FILENAME
+        path = self.config_dir / CC_SETS_FILENAME
         if path.exists():
             data = _yaml_load(path)
-            if "cc_name_sets" in data:
-                raw_sets = data["cc_name_sets"] or {}
-                name_sets = {}
-                cc_set_defaults = {}
-                for set_name, raw_set in raw_sets.items():
-                    names, defs = self._normalize_cc_set(raw_set)
-                    name_sets[set_name] = names
-                    if defs:
-                        cc_set_defaults[set_name] = defs
-                return name_sets, name_sets.get("default", {}), cc_set_defaults
-            if "cc_names" in data:
-                names, defs = self._normalize_cc_set(data["cc_names"])
-                cc_set_defaults = {"default": defs} if defs else {}
-                return {"default": names}, names, cc_set_defaults
+            raw = data.get("cc_sets")
+            if isinstance(raw, dict) and raw:
+                # Detect named sets vs flat: if any value is itself a dict
+                # whose keys are integers, it's a named-sets structure.
+                first_val = next(iter(raw.values()))
+                is_named = isinstance(first_val, dict)
+                if is_named:
+                    name_sets = {}
+                    cc_set_defaults = {}
+                    for set_name, raw_set in raw.items():
+                        names, defs = self._normalize_cc_set(raw_set)
+                        name_sets[set_name] = names
+                        if defs:
+                            cc_set_defaults[set_name] = defs
+                    return name_sets, name_sets.get("default", {}), cc_set_defaults
+                else:
+                    # Flat format — single set
+                    names, defs = self._normalize_cc_set(raw)
+                    cc_set_defaults = {"default": defs} if defs else {}
+                    return {"default": names}, names, cc_set_defaults
         # Create default file (flat format)
         default_names = {
             1: "modulation",
@@ -302,7 +308,7 @@ class MidiPresetService:
             64: "sustain",
             74: "filter_cutoff",
         }
-        _yaml_dump({"cc_names": default_names}, path)
+        _yaml_dump({"cc_sets": default_names}, path)
         return {"default": default_names}, default_names, {}
 
     _DEST_RESERVED_KEYS   = {"prefix", "channels"}
@@ -337,7 +343,7 @@ class MidiPresetService:
         return {}
 
     def _resolve_destinations(self):
-        """Resolve destination channel CC names from cc_name_sets.
+        """Resolve destination channel CC names from cc_sets.
 
         For each destination channel:
           1. Inherit from the channel's cc_group (names prefixed).
@@ -371,13 +377,13 @@ class MidiPresetService:
                 ch_names = {}
                 group_defaults = (self.cc_set_defaults.get(group_name, {})
                                   if group_name else {})
-                if group_name and group_name in self.cc_name_sets:
-                    for cc_num, raw_name in self.cc_name_sets[group_name].items():
+                if group_name and group_name in self.cc_sets:
+                    for cc_num, raw_name in self.cc_sets[group_name].items():
                         cc_num = int(cc_num)
                         ch_names[cc_num] = f"{ch_prefix}_{raw_name}" if ch_prefix else raw_name
                         # auto map: unprefixed name → all (ch, cc) targets
                         auto.setdefault(raw_name, []).append((ch, cc_num))
-                        # Propagate default from cc_name_set
+                        # Propagate default from cc_set
                         if cc_num in group_defaults:
                             defaults[(ch, cc_num)] = group_defaults[cc_num]
 
@@ -409,7 +415,7 @@ class MidiPresetService:
                     reverse[name] = (ch, cc_num)
 
         if defaults:
-            _log("INIT", f"CC defaults from cc_names: {len(defaults)} entries")
+            _log("INIT", f"CC defaults from cc_sets: {len(defaults)} entries")
         return forward, reverse, auto, defaults
 
     def _build_recall_ignore(self):
@@ -538,16 +544,16 @@ class MidiPresetService:
 
     # -- CC name <-> number ---------------------------------------------------
 
-    def _cc_names_for_dest(self, dest):
+    def _cc_set_for_dest(self, dest):
         """Return the CC-number-to-name dict for a destination."""
         if dest is not None and dest in self.destinations_map:
-            set_name = self.destinations_map[dest].get("cc_names", "default")
-            if set_name in self.cc_name_sets:
-                return self.cc_name_sets[set_name]
-        return self.cc_default_names
+            set_name = self.destinations_map[dest].get("cc_sets", "default")
+            if set_name in self.cc_sets:
+                return self.cc_sets[set_name]
+        return self.cc_default_set
 
     def _cc_num_to_name(self, cc_num, dest=None):
-        return self._cc_names_for_dest(dest).get(cc_num, cc_num)
+        return self._cc_set_for_dest(dest).get(cc_num, cc_num)
 
     def _cc_name_to_number(self, name, dest=None):
         """Resolve a CC name (or raw int) back to a CC number."""
@@ -555,7 +561,7 @@ class MidiPresetService:
             return name
         # Try the destination-specific set first
         if dest is not None and dest in self.destinations_map:
-            set_name = self.destinations_map[dest].get("cc_names", "default")
+            set_name = self.destinations_map[dest].get("cc_sets", "default")
             reverse = self.cc_reverse_sets.get(set_name, {})
             if name in reverse:
                 return reverse[name]
@@ -1185,7 +1191,7 @@ class MidiPresetService:
     def run(self):
         port_name = self.config.get("port_name", "MIDI SX Presets")
         dest_count = len(self.destinations_map)
-        cc_count = sum(len(s) for s in self.cc_name_sets.values())
+        cc_count = sum(len(s) for s in self.cc_sets.values())
 
         _log("INIT", "MIDI SysEx Preset Manager")
         _log("INIT", f"Config dir   : {self.config_dir}")
@@ -1200,7 +1206,7 @@ class MidiPresetService:
         _log("INIT", f"Device ID    : 0x{self.device_id:02X}")
         _log("INIT", f"Manufacturer : 0x{self.manufacturer_id:02X}")
         _log("INIT", f"Presets      : {len(self.presets)} loaded")
-        _log("INIT", f"CC names     : {cc_count} mappings in {len(self.cc_name_sets)} set(s)")
+        _log("INIT", f"CC sets      : {cc_count} mappings in {len(self.cc_sets)} set(s)")
         action_count = sum(len(v) for v in self.cc_mappings.values())
         _log("INIT", f"CC mappings  : {len(self.cc_mappings)} source CCs, {action_count} actions")
         _log("INIT", f"Shift CCs    : {sorted(self.shift_ccs)} | Joystick CCs: {sorted(self.joystick_ccs)}")

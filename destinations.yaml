@@ -4,7 +4,7 @@
 # a destination:
 #   prefix    - prepended to inherited CC names (e.g. "ns" → "ns_pan")
 #   channels  - dict of MIDI channels (0–15), each containing:
-#     cc_group  - inherit a named set from cc_name_sets in cc_names.yaml
+#     cc_group  - inherit a named set from cc_sets.yaml
 #     prefix    - override the destination prefix for this channel
 #     <int>     - bare integer keys are CC overrides (not prefixed),
 #                 can shadow an inherited name

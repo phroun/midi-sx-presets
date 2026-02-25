@@ -1,16 +1,16 @@
-# MIDI CC Name Mappings
+# MIDI CC Sets
 #
 # Maps CC numbers to human-readable names used in preset files.
 #
 # Two formats are supported:
 #
 #   FLAT (simple — one set of names used for everything):
-#     cc_names:
+#     cc_sets:
 #       1: modulation
 #       7: volume
 #
 #   NAMED SETS (for multi-destination setups — referenced by destinations.yaml):
-#     cc_name_sets:
+#     cc_sets:
 #       synth_ccs:
 #         1: modulation
 #         74: filter_cutoff
@@ -24,10 +24,10 @@
 # Plain strings (no default) are still valid — the engine falls back to
 # 64 for relative CCs and 0 for absolute CCs when no default is given.
 #
-# When using destinations, put a "default" set in cc_name_sets for any
+# When using destinations, put a "default" set in cc_sets for any
 # destination that doesn't specify its own set.
 
-cc_name_sets:
+cc_sets:
   mix_ccs:
     3:  {name: to_duck_out,    default: 0}
     7:  {name: to_perf_filter, default: 0}
