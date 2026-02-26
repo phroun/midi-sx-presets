@@ -398,14 +398,30 @@ class MidiPresetService:
                         if cc_num in group_defaults:
                             defaults[(ch, cc_num)] = group_defaults[cc_num]
 
-                # 2) Bare integer keys are CC overrides (not prefixed)
+                # 2) Override keys: integer CC numbers or cc_group names
+                # Build reverse lookup so names from the cc_group can be
+                # used as override keys (e.g. ``vcf_cutoff: {default: 80}``).
+                group_set = (self.cc_sets.get(group_name, {})
+                             if group_name else {})
+                name_to_cc = {v: int(k) for k, v in group_set.items()}
+
                 for key, value in ch_cfg.items():
-                    if key not in self._CH_RESERVED_KEYS:
-                        try:
-                            cc_num = int(key)
-                            ch_names[cc_num] = str(value)
-                        except (ValueError, TypeError):
-                            pass
+                    if key in self._CH_RESERVED_KEYS:
+                        continue
+                    # Resolve key → cc_num (integer literal or cc_group name)
+                    try:
+                        cc_num = int(key)
+                    except (ValueError, TypeError):
+                        cc_num = name_to_cc.get(str(key))
+                        if cc_num is None:
+                            continue
+                    if isinstance(value, dict):
+                        if "name" in value:
+                            ch_names[cc_num] = str(value["name"])
+                        if "default" in value:
+                            defaults[(ch, cc_num)] = int(value["default"])
+                    else:
+                        ch_names[cc_num] = str(value)
 
                 # 3) Merge into flat maps with conflict detection
                 for cc_num, name in ch_names.items():
