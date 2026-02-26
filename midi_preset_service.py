@@ -1033,13 +1033,16 @@ class MidiPresetService:
     _CENTER_VALUE = 63          # value to snap to
 
     def _update_center_tracker(self, dest_key, delta, target_cc, target_ch,
-                               min_v, max_v):
+                               min_v, max_v, center_value=None):
         """Track encoder direction changes for a center-enabled destination.
 
         Called after each relative movement.  When 4+ direction reversals
-        happen within 2 s and then the encoder stops, snaps to 63.
+        happen within 2 s and then the encoder stops, snaps to *center_value*
+        (defaults to ``_CENTER_VALUE``).
         Consistent single-direction movement for 1 s resets the tracker.
         """
+        if center_value is None:
+            center_value = self._CENTER_VALUE
         now = time.monotonic()
         direction = 1 if delta > 0 else -1
 
@@ -1081,10 +1084,10 @@ class MidiPresetService:
 
         # (Re)start the idle timer — if encoder stops while armed, snap
         self._restart_center_timer(dest_key, target_cc, target_ch,
-                                   min_v, max_v)
+                                   min_v, max_v, center_value)
 
     def _restart_center_timer(self, dest_key, target_cc, target_ch,
-                              min_v, max_v):
+                              min_v, max_v, center_value):
         """Cancel any pending idle timer and start a fresh one."""
         old = self._center_timers.pop(dest_key, None)
         if old is not None:
@@ -1092,14 +1095,14 @@ class MidiPresetService:
         t = threading.Timer(
             self._CENTER_IDLE,
             self._center_idle_fired,
-            args=(dest_key, target_cc, target_ch, min_v, max_v),
+            args=(dest_key, target_cc, target_ch, min_v, max_v, center_value),
         )
         t.daemon = True
         t.start()
         self._center_timers[dest_key] = t
 
     def _center_idle_fired(self, dest_key, target_cc, target_ch,
-                           min_v, max_v):
+                           min_v, max_v, center_value):
         """Called from timer thread when encoder has been idle."""
         self._center_timers.pop(dest_key, None)
         tr = self._center_trackers.get(dest_key)
@@ -1109,7 +1112,7 @@ class MidiPresetService:
             return
 
         # Snap to center
-        center = max(min_v, min(max_v, self._CENTER_VALUE))
+        center = max(min_v, min(max_v, center_value))
         self._set_dest(target_cc, target_ch, center, min_v, max_v)
         self._send_cc(target_cc, target_ch, center)
         name = (self.resolved_destinations.get((target_ch, target_cc))
@@ -1261,11 +1264,16 @@ class MidiPresetService:
             self._send_cc(target_cc, target_ch, output)
 
             # Center-snap: track encoder wiggle for center-enabled actions
-            if action.get("center") and delta:
+            # center: true → snap to _CENTER_VALUE (63)
+            # center: <int> → snap to that value
+            center_cfg = action.get("center")
+            if center_cfg and delta:
+                center_val = (int(center_cfg) if isinstance(center_cfg, int)
+                              else None)
                 dest_key = self._dest_key(target_cc, target_ch)
                 self._update_center_tracker(dest_key, delta,
                                             target_cc, target_ch,
-                                            min_v, max_v)
+                                            min_v, max_v, center_val)
 
             # Debug: show mapping result (debounced)
             name = (self.resolved_destinations.get(
