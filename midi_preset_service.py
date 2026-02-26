@@ -988,6 +988,22 @@ class MidiPresetService:
         self._mark_dirty()
         return value
 
+    def _boot_sync(self):
+        """Populate missing destinations from defaults and send all to hardware.
+
+        Called once after MIDI ports are opened so the hardware matches
+        the service's internal state from the very first moment.
+        """
+        filled = 0
+        for (ch, cc_num), default in self.dest_defaults.items():
+            key = self._dest_key(cc_num, ch)
+            if key not in self.destination_states:
+                self.destination_states[key] = default
+                filled += 1
+        if filled:
+            _log("BOOT", f"Filled {filled} destination(s) from defaults")
+        self._sync_all_destinations()
+
     def _sync_all_destinations(self):
         """Re-send all current destination values (e.g. after MIDI reset)."""
         count = 0
@@ -1926,6 +1942,9 @@ class MidiPresetService:
                 self.midi_in = mido.open_input(port_name, virtual=True)
                 self.midi_out = mido.open_output(port_name, virtual=True)
                 self.midi_return = self.midi_out
+
+            # Send saved/default state to hardware so it matches immediately
+            self._boot_sync()
 
             for msg in self.midi_in:
                 self._handle_message(msg)
