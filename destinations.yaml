@@ -41,7 +41,6 @@ poly:
     4:
       prefix: poly
       1: {poly_vcf_cutoff, default: 63}
-      85: {global_perf_out, default: 63}
     11:
       prefix: perf
       cc_group: mix_ccs
