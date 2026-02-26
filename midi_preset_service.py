@@ -403,7 +403,12 @@ class MidiPresetService:
                     if key not in self._CH_RESERVED_KEYS:
                         try:
                             cc_num = int(key)
-                            ch_names[cc_num] = str(value)
+                            if isinstance(value, dict):
+                                ch_names[cc_num] = str(value.get("name", value))
+                                if "default" in value:
+                                    defaults[(ch, cc_num)] = int(value["default"])
+                            else:
+                                ch_names[cc_num] = str(value)
                         except (ValueError, TypeError):
                             pass
 
