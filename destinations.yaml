@@ -37,10 +37,11 @@ poly:
   channels:
     2:
       cc_group: polysynth_ccs
-      85: {global_perf_out, default: 64}
+      85: {global_perf_out, default: 63}
     4:
-      cc_group: polysynth_ccs
-      85: {global_perf_out, default: 64}
+      prefix: poly
+      1: {poly_vcf_cutoff, default: 63}
+      85: {global_perf_out, default: 63}
     11:
       prefix: perf
       cc_group: mix_ccs
@@ -55,6 +56,16 @@ mono:
     10:
       prefix: pads
       cc_group: pad_ccs
+loop_a:
+  prefix: loop_a
+  channels:
+    3:
+      cc_group: mix_ccs
+loop_b:
+  prefix: loop_b
+  channels:
+    4:
+      cc_group: mix_ccs
 loop:
   channels:
     14:

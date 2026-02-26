@@ -383,8 +383,8 @@ note_mappings:
   - low: 0
     high: 127
     from_channel: 1
-    monophonic: bass;
-    fallback_priority: second_lowest
+    monophonic: bass
+    fallback_priority: most_recent
     replace_priority: lowest
     name: "Bass1"
     

@@ -34,8 +34,8 @@ cc_sets:
     9:  {name: to_bypass_duck, default: 0}
     10: {name: pan,            default: 64}
     11: {name: to_dsp,         default: 0}
-    12: {name: to_loop_a,      default: 0}
-    13: {name: to_loop_b,      default: 0}
+#    12: {name: to_loop_a,      default: 0}
+#    13: {name: to_loop_b,      default: 0}
     102: {name: to_loop_a,    default: 0}
     103: {name: to_loop_b,    default: 0}
   loop_ccs:
