@@ -404,7 +404,8 @@ class MidiPresetService:
                         try:
                             cc_num = int(key)
                             if isinstance(value, dict):
-                                ch_names[cc_num] = str(value.get("name", value))
+                                if "name" in value:
+                                    ch_names[cc_num] = str(value["name"])
                                 if "default" in value:
                                     defaults[(ch, cc_num)] = int(value["default"])
                             else:
