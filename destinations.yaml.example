@@ -31,31 +31,3 @@
 #   channels:
 #     2:
 #       cc_group: mix_ccs
-
-poly:
-  prefix: poly
-  channels:
-    2:
-      cc_group: polysynth_ccs
-      85: {global_perf_out, default: 64}
-    4:
-      cc_group: polysynth_ccs
-      85: {global_perf_out, default: 64}
-    11:
-      prefix: perf
-      cc_group: mix_ccs
-mono:
-  prefix: mono
-  channels:
-    1:
-      cc_group: mix_ccs
-    5:
-      prefix: bass
-      cc_group: mix_ccs
-    10:
-      prefix: pads
-      cc_group: pad_ccs
-loop:
-  channels:
-    14:
-      cc_group: loop_ccs

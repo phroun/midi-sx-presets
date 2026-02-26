@@ -1,0 +1,67 @@
+# MIDI CC Sets
+#
+# Maps CC numbers to human-readable names used in preset files.
+#
+# Two formats are supported:
+#
+#   FLAT (simple — one set of names used for everything):
+#     cc_sets:
+#       1: modulation
+#       7: volume
+#
+#   NAMED SETS (for multi-destination setups — referenced by destinations.yaml):
+#     cc_sets:
+#       synth_ccs:
+#         1: modulation
+#         74: filter_cutoff
+#       effects_ccs:
+#         1: mod_depth
+#         20: delay_time
+#
+# Entries may include a default value used to initialise destination state:
+#     10: {name: pan, default: 64}
+#
+# Plain strings (no default) are still valid — the engine falls back to
+# 64 for relative CCs and 0 for absolute CCs when no default is given.
+#
+# When using destinations, put a "default" set in cc_sets for any
+# destination that doesn't specify its own set.
+
+cc_sets:
+  mix_ccs:
+    3:  {name: to_duck_out,    default: 0}
+    7:  {name: to_perf_filter, default: 0}
+    9:  {name: to_bypass_duck, default: 0}
+    10: {name: pan,            default: 64}
+    11: {name: to_dsp,         default: 0}
+    12: {name: to_loop_a,      default: 0}
+    13: {name: to_loop_b,      default: 0}
+  polysynth_ccs:
+    3:  {name: to_duck_out,        default: 0}
+    7:  {name: to_perf_filter,     default: 0}
+    9:  {name: to_bypass_duck,     default: 0}
+    10: {name: stereo_pan,         default: 64}
+    11: {name: to_dsp,             default: 0}
+    12: {name: to_loop_a,          default: 0}
+    13: {name: to_loop_b,          default: 0}
+    70: poly_vcf_cutoff
+    71: {name: poly_morph,         default: 0}
+    72: {name: poly_vcf_release,   default: 32}
+    73: {name: poly_vcf_attack,    default: 32}
+    74: {name: poly_vcf_sustain,   default: 32}
+    75: {name: poly_vcf_decay,     default: 32}
+    77: {name: poly_release,       default: 0}
+    78: {name: poly_attack,        default: 0}
+    79: {name: poly_sustain,       default: 48}
+    80: {name: poly_decay,         default: 10}
+    85: global_perf_out
+    86: {name: poly_tremolo_ratee, default: 64}
+    87: {name: poly_wah_rate,      default: 64}
+    88: {name: poly_vibrato_rate,  default: 64}
+    89: {name: poly_pwm_rate,      default: 64}
+    90: {name: poly_to_delay,      default: 0}
+    91: {name: poly_to_reverb,     default: 0}
+    92: {name: poly_tremolo_depth, default: 64}
+    93: {name: poly_wah_depth,     default: 64}
+    94: {name: poly_vibrato_depth, default: 64}
+    95: {name: poly_pwm_depth,     default: 64}

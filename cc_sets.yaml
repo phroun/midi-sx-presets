@@ -36,32 +36,45 @@ cc_sets:
     11: {name: to_dsp,         default: 0}
     12: {name: to_loop_a,      default: 0}
     13: {name: to_loop_b,      default: 0}
+    102: {name: to_loop_a,    default: 0}
+    103: {name: to_loop_b,    default: 0}
+  loop_ccs:
+    1: {name: loop_a_speed,   default: 63}
+    2: {name: loop_a_length,  default: 127}
+    3: {name: loop_a_start,   default: 0}
+    4: {name: loop_b_speed,   default: 63}
+    5: {name: loop_b_length,  default: 127}
+    6: {name: loop_b_start,   default: 0}
+  pad_ccs:
+    69: {name: solo_mode,     default: 0}
   polysynth_ccs:
+    1:  {name: vcf_cutoff,         default: 63}
     3:  {name: to_duck_out,        default: 0}
     7:  {name: to_perf_filter,     default: 0}
     9:  {name: to_bypass_duck,     default: 0}
-    10: {name: stereo_pan,         default: 64}
+    10: {name: stereo_pan,         default: 63}
     11: {name: to_dsp,             default: 0}
-    12: {name: to_loop_a,          default: 0}
-    13: {name: to_loop_b,          default: 0}
-    70: poly_vcf_cutoff
-    71: {name: poly_morph,         default: 0}
-    72: {name: poly_vcf_release,   default: 32}
-    73: {name: poly_vcf_attack,    default: 32}
-    74: {name: poly_vcf_sustain,   default: 32}
-    75: {name: poly_vcf_decay,     default: 32}
-    77: {name: poly_release,       default: 0}
-    78: {name: poly_attack,        default: 0}
-    79: {name: poly_sustain,       default: 48}
-    80: {name: poly_decay,         default: 10}
-    85: global_perf_out
-    86: {name: poly_tremolo_ratee, default: 64}
-    87: {name: poly_wah_rate,      default: 64}
-    88: {name: poly_vibrato_rate,  default: 64}
-    89: {name: poly_pwm_rate,      default: 64}
-    90: {name: poly_to_delay,      default: 0}
-    91: {name: poly_to_reverb,     default: 0}
-    92: {name: poly_tremolo_depth, default: 64}
-    93: {name: poly_wah_depth,     default: 64}
-    94: {name: poly_vibrato_depth, default: 64}
-    95: {name: poly_pwm_depth,     default: 64}
+#    12: {name: to_loop_a,          default: 0}
+#    13: {name: to_loop_b,          default: 0}
+    71: {name: morph,          default: 0}
+    72: {name: vcf_release,    default: 32}
+    73: {name: vcf_attack,     default: 32}
+    74: {name: vcf_sustain,    default: 32}
+    75: {name: vcf_decay,      default: 32}
+    76: {name: vibrato_attack, default: 72}
+    77: {name: release,       default: 0}
+    78: {name: attack,        default: 0}
+    79: {name: sustain,       default: 48}
+    80: {name: decay,         default: 10}
+    86: {name: tremolo_rate,  default: 64}
+    87: {name: wah_rate,      default: 64}
+    88: {name: vibrato_rate,  default: 64}
+    89: {name: pwm_rate,      default: 64}
+    90: {name: to_delay,      default: 0}
+    91: {name: to_reverb,     default: 0}
+    92: {name: tremolo_depth, default: 64}
+    93: {name: wah_depth,     default: 64}
+    94: {name: vibrato_depth, default: 64}
+    95: {name: pwm_depth,     default: 64}
+    102: {name: to_loop_a,    default: 0}
+    103: {name: to_loop_b,    default: 0}

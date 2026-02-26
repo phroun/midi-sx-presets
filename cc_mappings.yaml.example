@@ -63,7 +63,6 @@ cc_mappings:
   # ---- Mod Wheel --------------------------------------------------------
   1:
     - {mask: 0, compare: 0, type: absolute, cc: 1, default: 64, name: "Mod Wheel"}
-    - {mask: 0, compare: 0, type: absolute, from_channel: 4, channel: 2, cc: 1, default: 64, name: "Mod Wheel P"}
 
   # ---- Joystick Vertical (state tracked above; "No Pass" prevents forwarding raw CC) ----
   2:
@@ -121,22 +120,22 @@ cc_mappings:
   # ---- Knobs - shift-dependent CC routing with relative encoding ----------
 
   70:  # K1
-    # Solo, Unshifted = Bass Filter, channel: 5, name: "To Dry Out"
-    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 3, default: 127, parameter: bass_to_duck_out}
-    # Solo, GreenShift = Raw Mono, channel: 1, name: "To Dry Out"
-    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 3, default: 0, parameter: mono_to_duck_out}
-    # Poly, Unshifted = Raw Poly, channel: 2, name: "To Dry Out"
-    - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 3, default: 0, parameter: poly_to_duck_out}
-    # Poly, TealShift = Perform Filter, channel: 11, name: "To Dry Out"
-    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 3, default: 127, parameter: perf_to_duck_out}
-    # Loop A to Dry Out, channel 3:, name: "Loop A to Dry Out"
-    - {mask: 0x008C, compare: 0x0004, type: relative, cc: 3, parameter: loop_a_to_duck_out}  # Vert-Dn Shift + "A"
-    - {mask: 0x008C, compare: 0x0008, type: relative, cc: 3, parameter: loop_a_to_duck_out}  # Vert-Up Shift + "A"
-    - {mask: 0x0060, compare: 0x0020, type: relative, cc: 3, parameter: loop_a_to_duck_out}  # Vert-Lf Shift + "A"
-    # Loop B to Dry Out, channel: 4, name: "Loop B to Dry Out"
-    - {mask: 0x008C, compare: 0x0084, type: relative, cc: 3, parameter: loop_b_to_duck_out}  # Vert-Dn Shift + "B"
-    - {mask: 0x008C, compare: 0x0088, type: relative, cc: 3, parameter: loop_b_to_duck_out}  # Vert-Up Shift + "B"
-    - {mask: 0x0060, compare: 0x0040, type: relative, cc: 3, parameter: loop_b_to_duck_out}  # Vert-Rt Shift + "B"
+    # Solo, Unshifted = Bass Filter
+    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 3, default: 127, channel: 5, name: "To Dry Out"}
+    # Solo, GreenShift = Raw Mono
+    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 3, channel: 1, name: "To Dry Out"}
+    # Poly, Unshifted = Raw Poly
+    - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 3, default: 0, name: "To Dry Out"}
+    # Poly, TealShift = Perform Filter
+    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 3, default: 127, channel: 11, name: "To Dry Out"}
+    # Loop A to Dry Out:
+    - {mask: 0x008C, compare: 0x0004, type: relative, cc: 3, channel: 3, name: "Loop A to Dry Out"}  # Vert-Dn Shift + "A"
+    - {mask: 0x008C, compare: 0x0008, type: relative, cc: 3, channel: 3, name: "Loop A to Dry Out"}  # Vert-Up Shift + "A"
+    - {mask: 0x0060, compare: 0x0020, type: relative, cc: 3, channel: 3, name: "Loop A to Dry Out"}  # Vert-Lf Shift + "A"
+    # Loop B to Dry Out:
+    - {mask: 0x008C, compare: 0x0084, type: relative, cc: 3, channel: 4, name: "Loop B to Dry Out"}  # Vert-Dn Shift + "B"
+    - {mask: 0x008C, compare: 0x0088, type: relative, cc: 3, channel: 4, name: "Loop B to Dry Out"}  # Vert-Up Shift + "B"
+    - {mask: 0x0060, compare: 0x0040, type: relative, cc: 3, channel: 4, name: "Loop B to Dry Out"}  # Vert-Rt Shift + "B"
     # PWM Rate:
     - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 89, default: 64, name: "PWM Rate"}  # Poly, BlueShift = FX
     # Attack:
@@ -194,23 +193,23 @@ cc_mappings:
     - {mask: 0x00EC, compare: 0x0084, type: relative, cc: 7, default: 127, channel: 4, name: "Loop B to Peform"}  # Vert-Dn Shift + "B"
     - {mask: 0x00EC, compare: 0x0088, type: relative, cc: 7, default: 127, channel: 4, name: "Loop B to Peform"}  # Vert-Up Shift + "B"
     - {mask: 0x0060, compare: 0x0040, type: relative, cc: 7, default: 127, channel: 4, name: "Loop B to Peform"}  # Vert-Rt Shift + "B"
-    # Wah Rate:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 87, channel: 2, name: "Wah Rate"}  # Poly, BlueShift
+    # Wah Amount:
+    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 87, channel: 2, name: "Wah Amount"}  # Poly, BlueShift
     # Release:
     - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 77, channel: 2, name: "Amp-Release"}  # Poly, GreenShift = Envelopes
 
   74:  # K5
     # Stereo Pan:
-    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 10, channel: 5, name: "Stereo1b Pan", center: true}  # Mono, Unshifted = Bass Filter
-    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 10, channel: 1, name: "Stereo1r Pan", center: true}  # Mono, GreenShifted = Raw Mono
-    - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 10, default: 64, name: "Stereo2r Pan", center: true}  # Poly, Unshifted = Raw Poly
-    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 10, channel: 11, name: "Stereo2p Pan", center: true}  # Poly, TealShifted = Performance Filter
+    - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 10, channel: 5, name: "Stereo1b Pan"}  # Mono, Unshifted = Bass Filter
+    - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 10, channel: 1, name: "Stereo1r Pan"}  # Mono, GreenShifted = Raw Mono
+    - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 10, default: 64, name: "Stereo2r Pan"}  # Poly, Unshifted = Raw Poly
+    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 10, channel: 11, name: "Stereo2p Pan"}  # Poly, TealShifted = Performance Filter
     # Loop A Stereo Pan
-    - {mask: 0x00EC, compare: 0x0004, type: relative, cc: 10, channel: 3, name: "Loop A Stereo Pan", center: true}  # Vert-Dn Shift + "A"
-    - {mask: 0x00EC, compare: 0x0008, type: relative, cc: 10, channel: 3, name: "Loop A Stereo Pan", center: true}  # Vert-Up Shift + "A"
+    - {mask: 0x00EC, compare: 0x0004, type: relative, cc: 10, channel: 3, name: "Loop A Stereo Pan"}  # Vert-Dn Shift + "A"
+    - {mask: 0x00EC, compare: 0x0008, type: relative, cc: 10, channel: 3, name: "Loop A Stereo Pan"}  # Vert-Up Shift + "A"
     # Loop B Stereo Pan
-    - {mask: 0x00EC, compare: 0x0084, type: relative, cc: 10, channel: 4, name: "Loop B Stereo Pan", center: true}  # Vert-Up Shift + "B"
-    - {mask: 0x00EC, compare: 0x0088, type: relative, cc: 10, channel: 4, name: "Loop B Stereo Pan", center: true}  # Vert-Dn Shift + "B"
+    - {mask: 0x00EC, compare: 0x0084, type: relative, cc: 10, channel: 4, name: "Loop B Stereo Pan"}  # Vert-Up Shift + "B"
+    - {mask: 0x00EC, compare: 0x0088, type: relative, cc: 10, channel: 4, name: "Loop B Stereo Pan"}  # Vert-Dn Shift + "B"
     # Loop A Speed:
     - {mask: 0x0068, compare: 0x0020, type: relative, cc: 1, default: 64, channel: 14, name: "Loop A Speed"}  # Holding "A"
     # Loop B Speed:
@@ -263,7 +262,7 @@ cc_mappings:
     - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 74, default: 32, name: "F-Sustain"}  # Poly, GreenShift = Envelopes
 
   77:  # K8
-    # Perform Dry Out (Global)
+    # Perform Dry Out (Global):
     - {from_channel: 1, mask: 0x006D, compare: 0x0000, type: relative, cc: 3, default: 127, channel: 11, name: "Perform Out Global"}  # Mono, Unshift or Green
     - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 3, default: 127, channel: 11, name: "Perform Out Global"}  # Poly, Unshifted
     - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 3, default: 127, channel: 11, name: "Perform Out Global"}  # Poly, Unshifted
@@ -276,7 +275,7 @@ cc_mappings:
     - {mask: 0x008C, compare: 0x0088, type: relative, cc: 103, default: 0, channel: 11, name: "Perform to Loop B"}  # Vertical Shift + "B"
     - {mask: 0x0060, compare: 0x0040, type: relative, cc: 103, default: 0, channel: 11, name: "Perform to Loop B"}  # Vertical Shift + "B"
     # Wah Amount:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 93, channel: 2, name: "Wah Amount"}  # Poly, BlueShift
+    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 93, channel: 14, name: "Wah Amount"}  # Poly, BlueShift
     # Filter Release:
     - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 72, channel: 14, name: "F-Release"}  # Poly, GreenShift = Envelopes
 
@@ -378,61 +377,3 @@ cc_mappings:
 #     max_polyphony: 4
 #     channel: 3
 #     name: "4-voice poly synth"
-
-note_mappings:
-  - low: 0
-    high: 127
-    from_channel: 1
-    monophonic: bass;
-    fallback_priority: second_lowest
-    replace_priority: lowest
-    name: "Bass1"
-    
-  - low: 0
-    high: 127
-    from_channel: 2
-    polyphony_instance: chords
-    max_polyphony: 4
-    fallback_priority: most_recent
-    replace_priority: highest
-    channel: 2
-    name: "Poly2"
-
-  - low: 0
-    high: 59
-    mask: 0x0001
-    compare: 0x0000
-    from_channel: 4
-    monophonic: bass
-    transpose: -36
-    channel: 1
-    name: "Bass4"
-
-  - low: 60
-    high: 127
-    mask: 0x0001
-    compare: 0x0000
-    from_channel: 4
-    polyphony_instance: chords
-    channel: 2
-    name: "Poly4"
-
-  - low: 60
-    high: 127
-    mask: 0x0001
-    compare: 0x0001
-    from_channel: 4
-    monophonic: bass
-    transpose: -12
-    channel: 1
-    name: "Bass4"
-
-  - low: 0
-    high: 59
-    mask: 0x0001
-    compare: 0x0001
-    from_channel: 4
-    polyphony_instance: chords
-    channel: 2
-    name: "Poly4"
-

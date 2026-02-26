@@ -30,8 +30,30 @@ manufacturer_id: 0x7D
 # Uncomment and set the port names to match your system.
 # Use --list-ports to see available MIDI port names.
 #
+# routing:
+#   iac_input: "IAC Driver Bus 1"
+#   iac_return: "IAC Driver Bus 2"
+#   hardware_output: "Your MIDI Interface"
 
-routing:
-  iac_input: "IAC Driver Bus 4 - Output"
-  iac_return: "IAC Driver Bus 5 - Return"
-  hardware_output: "UMC404HD 192k"
+# --- Recall Ignore ---------------------------------------------------------------
+#
+# Parameters listed here are saved normally but skipped during preset
+# recall, keeping their current live value.  Useful for global controls
+# like master volume that shouldn't jump when switching presets.
+#
+# Entries can be a destination parameter name (string) or an explicit
+# channel/cc pair (channel is 1-based):
+#
+# recall_ignore:
+#   - ns_to_perf_filter
+#   - {channel: 1, cc: 7}
+
+# --- Persistent State -----------------------------------------------------------
+#
+# The service periodically saves all destination values, the current
+# preset cursor, and mode flags to state.yaml so it can recover
+# seamlessly after a crash or restart.  Defaults are only used for
+# parameters not yet seen in the state file.
+#
+# Interval in seconds between state dumps (0 to disable).
+# state_save_interval: 5
