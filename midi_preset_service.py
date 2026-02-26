@@ -412,7 +412,7 @@ class MidiPresetService:
                     fwd_prev = forward.get((ch, cc_num))
                     if fwd_prev is not None and fwd_prev != name:
                         _log("WARN",
-                             f"Destination '{dest_id}': ch{ch}/CC{cc_num} "
+                             f"Destination '{dest_id}': ch{ch + 1}/CC{cc_num} "
                              f"already mapped to '{fwd_prev}', "
                              f"overwriting with '{name}'")
                     forward[(ch, cc_num)] = name
@@ -421,8 +421,8 @@ class MidiPresetService:
                     if rev_prev is not None and rev_prev != (ch, cc_num):
                         _log("WARN",
                              f"Destination '{dest_id}': name conflict — "
-                             f"'{name}' maps to both ch{rev_prev[0]}/CC{rev_prev[1]} "
-                             f"and ch{ch}/CC{cc_num}")
+                             f"'{name}' maps to both ch{rev_prev[0] + 1}/CC{rev_prev[1]} "
+                             f"and ch{ch + 1}/CC{cc_num}")
                     reverse[name] = (ch, cc_num)
 
         if defaults:
