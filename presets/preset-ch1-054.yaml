@@ -1,0 +1,114 @@
+name: Preset 54
+read_only: false
+poly_vcf_cutoff: 63
+poly_to_duck_out: 0
+poly_to_perf_filter: 110
+poly_to_bypass_duck: 0
+poly_stereo_pan: 63
+poly_to_dsp: 0
+poly_vcf_release: 32
+poly_vcf_attack: 32
+poly_vcf_sustain: 32
+poly_vcf_decay: 32
+poly_vibrato_attack: 72
+poly_release: 0
+poly_attack: 0
+poly_sustain: 48
+poly_decay: 10
+poly_tremolo_rate: 110
+poly_wah_rate: 21
+poly_vibrato_rate: 78
+poly_pwm_rate: 63
+poly_to_delay: 1
+poly_to_reverb: 0
+poly_tremolo_depth: 0
+poly_wah_depth: 0
+poly_vibrato_depth: 0
+poly_pwm_depth: 0
+perf_to_duck_out: 127
+perf_to_perf_filter: 0
+perf_to_bypass_duck: 0
+perf_pan: 63
+perf_to_dsp: 0
+perf_to_delay: 0
+perf_to_reverb: 0
+mono_to_duck_out: 0
+mono_to_perf_filter: 0
+mono_to_bypass_duck: 0
+mono_pan: 63
+mono_to_dsp: 0
+mono_to_delay: 0
+mono_to_reverb: 0
+bass_to_duck_out: 110
+bass_to_perf_filter: 0
+bass_to_bypass_duck: 0
+bass_pan: 63
+bass_to_dsp: 0
+bass_to_delay: 0
+bass_to_reverb: 0
+pads_solo_mode: 0
+loop_a_to_duck_out: 0
+loop_a_to_perf_filter: 0
+loop_a_to_bypass_duck: 0
+loop_a_pan: 63
+loop_a_to_dsp: 0
+loop_a_to_delay: 0
+loop_a_to_reverb: 0
+loop_b_to_duck_out: 0
+loop_b_to_perf_filter: 0
+loop_b_to_bypass_duck: 0
+loop_b_pan: 63
+loop_b_to_dsp: 0
+loop_b_to_delay: 0
+loop_b_to_reverb: 0
+poly_morph: 63
+channels:
+  0:
+    cc_values:
+      1: 12
+  2:
+    cc_values:
+      1: 0
+  3:
+    cc_values:
+      1: 127
+  4:
+    cc_values:
+      1: 0
+  5:
+    cc_values:
+      1: 0
+  6:
+    cc_values:
+      1: 0
+  7:
+    cc_values:
+      1: 0
+  8:
+    cc_values:
+      1: 0
+  9:
+    cc_values:
+      1: 0
+  10:
+    cc_values:
+      1: 0
+  11:
+    cc_values:
+      1: 0
+  12:
+    cc_values:
+      1: 0
+      46: 94
+  14:
+    cc_values:
+      1: 0
+  15:
+    cc_values:
+      1: 0
+  13:
+    cc_values:
+      8: 0
+      72: 0
+seq_states:
+  MonoVoice: 2

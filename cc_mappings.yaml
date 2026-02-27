@@ -95,8 +95,10 @@ cc_mappings:
 
   20:
     - {mask: 0, compare: 0, type: absolute, cc: 69, default: 0, channel: 10, name: "Solo"}
+  24:
+    - {mask: 0, compare: 0, type: absolute, cc: 7, default: 0, seq_reset: MonoVoice, channel: 14, name: "Reset Voice"}
   21:
-    - {mask: 0, compare: 0, type: absolute, cc: 8, default: 0, channel: 14, name: "Next"}
+    - {mask: 0, compare: 0, type: absolute, cc: 8, default: 0, seq_next: MonoVoice, seq_max: 3, channel: 14, name: "Next Voice"}
   22:
     - {mask: 0, compare: 0, type: absolute, cc: 22, default: 0, name: "Pad 7"}
   23:
@@ -276,7 +278,7 @@ cc_mappings:
     - {mask: 0x008C, compare: 0x0088, type: relative, cc: 103, default: 0, channel: 11, name: "Perform to Loop B"}  # Vertical Shift + "B"
     - {mask: 0x0060, compare: 0x0040, type: relative, cc: 103, default: 0, channel: 11, name: "Perform to Loop B"}  # Vertical Shift + "B"
     # Wah Amount:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 93, channel: 2, name: "Wah Amount"}  # Poly, BlueShift
+    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, parameter: wah_depth}  # Poly, BlueShift
     # Filter Release:
     - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 72, channel: 14, name: "F-Release"}  # Poly, GreenShift = Envelopes
 
@@ -382,12 +384,18 @@ cc_mappings:
 note_mappings:
   - low: 0
     high: 127
+    from_channel: 13
+    channel: 10
+
+note_mappings:
+  - low: 0
+    high: 127
     from_channel: 1
     monophonic: bass
     fallback_priority: most_recent
     replace_priority: lowest
     name: "Bass1"
-    transpose: -24
+    transpose: -36
     
   - low: 0
     high: 127
