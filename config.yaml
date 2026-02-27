@@ -46,3 +46,7 @@ routing:
   iac_input: "IAC Driver Bus 4 - Output"
   iac_return: "IAC Driver Bus 5 - Return"
   hardware_output: "UMC404HD 192k"
+
+bank_tags:
+  1: [mono]
+  2: [poly]

@@ -55,10 +55,11 @@ cc_sets:
     13: {name: loop_b_retrig,  default: 0,  tags: [looper]}
     14: {name: loop_b_record,  default: 0,  tags: [looper]}
     15: {name: loop_b_erase,  default: 0,   tags: [looper]}
-    71: {name: poly_morph, default: 63}
+    71: {name: poly_morph, default: 63, tags: [poly]}
   pad_ccs:
-    69: {name: solo_mode,     default: 0}
+    69: {name: solo_mode,     default: 0, tags: [mono]}
   polysynth_ccs:
+    tags: [poly]
     1:  {name: vcf_cutoff,         default: 63}
     3:  {name: to_duck_out,        default: 0}
     7:  {name: to_perf_filter,     default: 110}
