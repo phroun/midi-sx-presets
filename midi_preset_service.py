@@ -124,6 +124,11 @@ class MidiPresetService:
             self.cc_defaults.update(defs)
         self.recall_ignore = self._build_recall_ignore()
         self.presets = self._load_presets()
+
+        # Sequential step counters (populated by _load_cc_mappings)
+        self.seq_states = {}   # {name: current_step (1-based)}
+        self.seq_defs = {}     # {name: {reset_cc, reset_ch, next_cc, next_ch, max}}
+
         self._load_cc_mappings()
 
         # Build reverse lookups (name -> number) for each set
@@ -157,10 +162,6 @@ class MidiPresetService:
         # Input control flags (proxy mode only)
         self.no_input = no_input          # --no-input: skip routing.inputs
         self.no_iac_input = no_iac_input  # --no-iac-input: skip routing.iac_input
-
-        # Sequential step counters (populated by _load_cc_mappings)
-        self.seq_states = {}   # {name: current_step (1-based)}
-        self.seq_defs = {}     # {name: {reset_cc, reset_ch, next_cc, next_ch, max}}
 
         # MIDI ports (opened in run())
         self.midi_in = None
