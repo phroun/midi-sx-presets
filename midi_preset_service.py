@@ -142,6 +142,9 @@ class MidiPresetService:
         self.manufacturer_id = self.config.get("manufacturer_id", SYSEX_MANUFACTURER_ID)
         self.device_id = self.config.get("device_id", DEFAULT_DEVICE_ID)
 
+        # Seq pulse delay: config.yaml "seq_delay" overrides the class default
+        self._seq_delay = self.config.get("seq_delay", self._SEQ_PULSE_DELAY)
+
         # Runtime state
         self.load_mode = False
 
@@ -675,6 +678,8 @@ class MidiPresetService:
                         defn["next_ch"] = ch_0
                         if "seq_max" in action:
                             defn["max"] = action["seq_max"]
+                    if "seq_delay" in action:
+                        defn["delay"] = action["seq_delay"]
 
         # Build set of (ch, cc) pairs used by seq counters — these are
         # momentary control CCs and must not be sent during normal CC recall.
@@ -1259,7 +1264,7 @@ class MidiPresetService:
 
     # -- Sequential step counter sync ----------------------------------------
 
-    _SEQ_PULSE_DELAY = 0.100  # seconds between all seq sync steps
+    _SEQ_PULSE_DELAY = 0.100  # fallback: seconds between all seq sync steps
 
     def _sync_seq(self, name, defn, target_step):
         """Send reset pulse + (target_step − 1) next pulses to hardware."""
@@ -1273,16 +1278,17 @@ class MidiPresetService:
         if next_cc is None or next_ch is None:
             _log("WARN", f"Seq '{name}': missing next CC/channel — skipped")
             return
+        delay = defn.get("delay", self._seq_delay)
         # Reset pulse
         self._send_cc(reset_cc, reset_ch, 127)
-        time.sleep(self._SEQ_PULSE_DELAY)
+        time.sleep(delay)
         self._send_cc(reset_cc, reset_ch, 0)
         # Next pulses
         nexts = max(0, target_step - 1)
         for _ in range(nexts):
-            time.sleep(self._SEQ_PULSE_DELAY)
+            time.sleep(delay)
             self._send_cc(next_cc, next_ch, 127)
-            time.sleep(self._SEQ_PULSE_DELAY)
+            time.sleep(delay)
             self._send_cc(next_cc, next_ch, 0)
         _log("SEQ", f"'{name}' synced to step {target_step} "
              f"(reset + {nexts} next{'s' if nexts != 1 else ''})")
@@ -2225,11 +2231,14 @@ class MidiPresetService:
                      f"fallback={params['fallback_priority']} "
                      f"replace={params['replace_priority']}")
         if self.seq_defs:
-            _log("INIT", f"Seq counters : {len(self.seq_defs)} defined")
+            _log("INIT", f"Seq counters : {len(self.seq_defs)} defined "
+                 f"(global delay: {self._seq_delay}s)")
             for sname, sdef in self.seq_defs.items():
+                delay_str = f", delay={sdef['delay']}s" if "delay" in sdef else ""
                 _log("INIT", f"  '{sname}': max={sdef.get('max', '?')}, "
                      f"reset=CC{sdef.get('reset_cc', '?')}/ch{(sdef.get('reset_ch', 0) or 0) + 1}, "
-                     f"next=CC{sdef.get('next_cc', '?')}/ch{(sdef.get('next_ch', 0) or 0) + 1}")
+                     f"next=CC{sdef.get('next_cc', '?')}/ch{(sdef.get('next_ch', 0) or 0) + 1}"
+                     f"{delay_str}")
         _log("INIT", f"Shift CCs    : {sorted(self.shift_ccs)} | Joystick CCs: {sorted(self.joystick_ccs)}")
         tmode = "intercept" if self.intercept_mode else "passthrough"
         _log("INIT", f"Transport    : {tmode}")
