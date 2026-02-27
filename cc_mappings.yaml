@@ -387,7 +387,7 @@ note_mappings:
     fallback_priority: most_recent
     replace_priority: lowest
     name: "Bass1"
-    transpose: -12
+    transpose: -24
     
   - low: 0
     high: 127
@@ -405,7 +405,7 @@ note_mappings:
     compare: 0x0000
     from_channel: 4
     monophonic: bass
-    transpose: -36
+    transpose: -48
     channel: 1
     name: "Bass4"
 
@@ -424,7 +424,7 @@ note_mappings:
     compare: 0x0001
     from_channel: 4
     monophonic: bass
-    transpose: -24
+    transpose: -36
     channel: 1
     name: "Lead4"
 
