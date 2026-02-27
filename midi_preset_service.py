@@ -106,12 +106,15 @@ class MidiPresetService:
         self.config = self._load_or_create_config()
         (self.cc_sets,
          self.cc_default_set,
-         self.cc_set_defaults) = self._load_cc_sets()
+         self.cc_set_defaults,
+         self.cc_set_tags) = self._load_cc_sets()
         self.destinations_map = self._load_destinations()
         (self.resolved_destinations,
          self.reverse_destinations,
          self.auto_destinations,
-         self.dest_defaults) = self._resolve_destinations()
+         self.dest_defaults,
+         self.dest_tags) = self._resolve_destinations()
+        self.bank_tags = self._load_bank_tags()
         # Flat CC-number → default, merged from all sets (fallback when
         # destinations aren't configured).
         self.cc_defaults = {}
@@ -242,35 +245,60 @@ class MidiPresetService:
         return defaults
 
     @staticmethod
-    def _normalize_cc_set(raw_set):
-        """Normalise a CC name set, returning (names_dict, defaults_dict).
+    def _normalize_cc_set(raw_set, group_tags=None):
+        """Normalise a CC name set, returning (names_dict, defaults_dict, tags_dict).
 
         Entries may be plain strings or dicts with ``name`` and optional
-        ``default``::
+        ``default`` and ``tags``::
 
-            3: to_duck_out               # plain string, no default
-            7: {name: to_perf_filter, default: 127}   # dict with default
+            3: to_duck_out               # plain string, no default/tags
+            7: {name: to_perf_filter, default: 127, tags: [mix]}
+
+        *group_tags* (list or None) are inherited by every entry in the set.
+        Per-entry tags merge with group_tags.  Entries with no tags at all
+        (and no group_tags) get the implicit ``["default"]`` tag.
         """
         names = {}
         defaults = {}
+        tags = {}
+        base_tags = set(group_tags) if group_tags else set()
         for cc_num, entry in (raw_set or {}).items():
             cc_num = int(cc_num)
             if isinstance(entry, dict):
                 names[cc_num] = str(entry["name"])
                 if "default" in entry:
                     defaults[cc_num] = int(entry["default"])
+                entry_tags = entry.get("tags")
+                if entry_tags:
+                    tags[cc_num] = base_tags | set(entry_tags)
+                elif base_tags:
+                    tags[cc_num] = set(base_tags)
+                else:
+                    tags[cc_num] = {"default"}
             else:
                 names[cc_num] = str(entry)
-        return names, defaults
+                tags[cc_num] = set(base_tags) if base_tags else {"default"}
+        return names, defaults, tags
 
     def _load_cc_sets(self):
         """Load CC name mappings.
 
-        Returns ``(name_sets, default_names, cc_set_defaults)``.
+        Returns ``(name_sets, default_names, cc_set_defaults, cc_set_tags)``.
 
         *name_sets* and *default_names* are string-only dicts as before.
         *cc_set_defaults* maps ``set_name → {cc_num: default_value}``
         for entries that specified a ``default``.
+        *cc_set_tags* maps ``set_name → {cc_num: set_of_tags}``
+        for per-CC tag sets (group-level tags merged with per-entry tags;
+        untagged entries get ``{"default"}``).
+
+        Named sets may carry a ``tags`` key at the group level::
+
+            cc_sets:
+              mix_ccs:
+                tags: [mix]
+                3: {name: to_duck_out, tags: [routing]}
+                7: to_perf_filter           # inherits group tag "mix"
 
         Supports two YAML formats:
 
@@ -299,17 +327,28 @@ class MidiPresetService:
                 if is_named:
                     name_sets = {}
                     cc_set_defaults = {}
+                    cc_set_tags = {}
                     for set_name, raw_set in raw.items():
-                        names, defs = self._normalize_cc_set(raw_set)
+                        # Extract group-level tags before normalizing
+                        group_tags = None
+                        if isinstance(raw_set, dict):
+                            group_tags = raw_set.pop("tags", None)
+                        names, defs, tags = self._normalize_cc_set(
+                            raw_set, group_tags=group_tags)
                         name_sets[set_name] = names
                         if defs:
                             cc_set_defaults[set_name] = defs
-                    return name_sets, name_sets.get("default", {}), cc_set_defaults
+                        if tags:
+                            cc_set_tags[set_name] = tags
+                    return (name_sets, name_sets.get("default", {}),
+                            cc_set_defaults, cc_set_tags)
                 else:
                     # Flat format — single set
-                    names, defs = self._normalize_cc_set(raw)
+                    names, defs, tags = self._normalize_cc_set(raw)
                     cc_set_defaults = {"default": defs} if defs else {}
-                    return {"default": names}, names, cc_set_defaults
+                    cc_set_tags = {"default": tags} if tags else {}
+                    return ({"default": names}, names,
+                            cc_set_defaults, cc_set_tags)
         # Create default file (flat format)
         default_names = {
             1: "modulation",
@@ -320,7 +359,7 @@ class MidiPresetService:
             74: "filter_cutoff",
         }
         _yaml_dump({"cc_sets": default_names}, path)
-        return {"default": default_names}, default_names, {}
+        return {"default": default_names}, default_names, {}, {}
 
     _DEST_RESERVED_KEYS   = {"prefix", "channels"}
     _CH_RESERVED_KEYS     = {"cc_group", "prefix"}
@@ -361,18 +400,21 @@ class MidiPresetService:
           2. Apply bare integer-keyed overrides (not prefixed).
           3. Check for name conflicts across all destinations.
           4. Collect per-(channel, cc) defaults from cc_set_defaults.
+          5. Propagate per-(channel, cc) tags from cc_set_tags + overrides.
 
-        Returns a tuple of four flat dicts:
+        Returns a tuple of five flat dicts:
           forward:       ``{(channel, cc_num): name}``
           reverse:       ``{name: (channel, cc_num)}``
           auto:          ``{unprefixed_name: [(channel, cc_num), ...]}``
           dest_defaults: ``{(channel, cc_num): default_value}``
+          dest_tags:     ``{(channel, cc_num): set_of_tags}``
         Logs warnings for every conflict found.
         """
         forward  = {}   # (ch, cc_num) -> name
         reverse  = {}   # name -> (ch, cc_num)
         auto     = {}   # unprefixed_name -> [(ch, cc_num), ...]
         defaults = {}   # (ch, cc_num) -> default value
+        tags     = {}   # (ch, cc_num) -> set of tag strings
         for dest_id, dest_cfg in self.destinations_map.items():
             prefix = dest_cfg.get("prefix", "")
             channels_cfg = dest_cfg.get("channels", {})
@@ -386,8 +428,11 @@ class MidiPresetService:
                 ch_prefix = ch_cfg.get("prefix", prefix)
                 group_name = ch_cfg.get("cc_group")
                 ch_names = {}
+                ch_tags = {}
                 group_defaults = (self.cc_set_defaults.get(group_name, {})
                                   if group_name else {})
+                group_tags = (self.cc_set_tags.get(group_name, {})
+                              if group_name else {})
                 if group_name and group_name in self.cc_sets:
                     for cc_num, raw_name in self.cc_sets[group_name].items():
                         cc_num = int(cc_num)
@@ -397,6 +442,11 @@ class MidiPresetService:
                         # Propagate default from cc_set
                         if cc_num in group_defaults:
                             defaults[(ch, cc_num)] = group_defaults[cc_num]
+                        # Propagate tags from cc_set
+                        if cc_num in group_tags:
+                            ch_tags[cc_num] = set(group_tags[cc_num])
+                        else:
+                            ch_tags[cc_num] = {"default"}
 
                 # 2) Override keys: integer CC numbers or cc_group names
                 # Build reverse lookup so names from the cc_group can be
@@ -420,6 +470,11 @@ class MidiPresetService:
                             ch_names[cc_num] = str(value["name"])
                         if "default" in value:
                             defaults[(ch, cc_num)] = int(value["default"])
+                        # Per-channel override tags merge with inherited tags
+                        override_tags = value.get("tags")
+                        if override_tags:
+                            existing = ch_tags.get(cc_num, set())
+                            ch_tags[cc_num] = existing | set(override_tags)
                     else:
                         ch_names[cc_num] = str(value)
 
@@ -441,9 +496,16 @@ class MidiPresetService:
                              f"and ch{ch + 1}/CC{cc_num}")
                     reverse[name] = (ch, cc_num)
 
+                # 4) Merge tags into flat map
+                for cc_num, tag_set in ch_tags.items():
+                    tags[(ch, cc_num)] = tag_set
+
         if defaults:
             _log("INIT", f"CC defaults from cc_sets: {len(defaults)} entries")
-        return forward, reverse, auto, defaults
+        tag_count = sum(1 for t in tags.values() if t != {"default"})
+        if tag_count:
+            _log("INIT", f"CC tags: {tag_count} entries with non-default tags")
+        return forward, reverse, auto, defaults, tags
 
     def _build_recall_ignore(self):
         """Build a set of (channel, cc_num) pairs to skip during preset recall.
@@ -473,6 +535,55 @@ class MidiPresetService:
         if ignore:
             _log("INIT", f"Recall ignore: {len(ignore)} parameter(s)")
         return ignore
+
+    def _load_bank_tags(self):
+        """Load per-bank tag filters from config.yaml.
+
+        Configured as ``bank_tags``, mapping 1-based channel numbers to
+        lists of tag strings.  Only destination states whose tags intersect
+        the bank's tag list are included in saves and recalls::
+
+            bank_tags:
+              1: [default, synth, mix]
+              2: [default, performance]
+
+        Banks not listed default to ``["default"]`` — only parameters with
+        the implicit/explicit "default" tag are included.
+
+        Returns ``{channel_0based: set_of_tags}``.
+        """
+        raw = self.config.get("bank_tags", {})
+        bank_tags = {}
+        if isinstance(raw, dict):
+            for ch, tag_list in raw.items():
+                ch_0 = int(ch) - 1
+                if isinstance(tag_list, list):
+                    bank_tags[ch_0] = set(tag_list)
+                elif isinstance(tag_list, str):
+                    bank_tags[ch_0] = {tag_list}
+        if bank_tags:
+            info = ", ".join(f"ch{ch + 1}:{sorted(t)}"
+                             for ch, t in sorted(bank_tags.items()))
+            _log("INIT", f"Bank tags: {info}")
+        return bank_tags
+
+    def _tags_for_dest(self, channel, cc_num):
+        """Return the tag set for a (channel, cc_num) destination pair.
+
+        Falls back to ``{"default"}`` if no tags were configured.
+        """
+        return self.dest_tags.get((channel, cc_num), {"default"})
+
+    def _bank_allows(self, bank_channel, dest_channel, cc_num):
+        """Check whether a bank allows a particular destination parameter.
+
+        Returns True if the parameter's tags intersect the bank's allowed
+        tags.  Banks not configured in ``bank_tags`` default to
+        ``{"default"}``.
+        """
+        allowed = self.bank_tags.get(bank_channel, {"default"})
+        param_tags = self._tags_for_dest(dest_channel, cc_num)
+        return bool(allowed & param_tags)
 
     def _load_cc_mappings(self):
         """Load cc_mappings.yaml — shift/joystick definitions and CC routing.
@@ -718,6 +829,10 @@ class MidiPresetService:
         (channel, cc) pair has a unique name in resolved_destinations
         are stored as top-level keys.  Everything else falls back to
         the channels/cc_values dict.
+
+        Parameters are filtered by ``bank_tags``: only destination states
+        whose tags intersect the bank's allowed tag list are included.
+        Banks not listed in ``bank_tags`` default to ``["default"]``.
         """
         # Check write-protection
         bank = self.presets.get(channel, {})
@@ -741,9 +856,14 @@ class MidiPresetService:
         # Partition destination_states into known (flat) and unknown (channeled)
         unknown_channels = {}
         named_count = 0
+        skipped_count = 0
         for key, value in self.destination_states.items():
             parts = key.split("_")
             cc_num, ch = int(parts[0]), int(parts[1])
+            # Tag filtering: skip parameters whose tags don't match this bank
+            if not self._bank_allows(channel, ch, cc_num):
+                skipped_count += 1
+                continue
             resolved_name = self.resolved_destinations.get((ch, cc_num))
             if resolved_name is not None:
                 preset[resolved_name] = value
@@ -762,8 +882,9 @@ class MidiPresetService:
         self._last_preset = (channel, note)
         unknown_count = sum(len(ccs) for ccs in unknown_channels.values())
         total = named_count + unknown_count
+        tag_info = f", {skipped_count} filtered by tags" if skipped_count else ""
         _log("SAVE", f"Preset ch{channel + 1}/{note} saved ({total} CCs: "
-             f"{named_count} named, {unknown_count} in channels).")
+             f"{named_count} named, {unknown_count} in channels{tag_info}).")
 
     def _set_write_protect(self, locked):
         """Enable or disable write-protection on the most recently used preset."""
@@ -871,7 +992,11 @@ class MidiPresetService:
     # -- Recall ---------------------------------------------------------------
 
     def _recall_preset(self, channel, note):
-        """Send all stored CC/PC values for *note* in *channel*'s bank."""
+        """Send all stored CC/PC values for *note* in *channel*'s bank.
+
+        Parameters are filtered by ``bank_tags``: only values whose
+        destination tags intersect the bank's allowed tags are recalled.
+        """
         bank = self.presets.get(channel, {})
         preset = bank.get(note)
         if preset is None:
@@ -884,14 +1009,14 @@ class MidiPresetService:
         _log("RECALL", f"Preset ch{channel + 1}/{note}: \"{name}\"")
 
         # 1) Top-level named parameters (resolved via reverse_destinations)
-        self._recall_named(preset)
+        self._recall_named(preset, channel)
 
         # 2) Channeled CC values (fallback for unknowns / legacy)
         if "channels" in preset:
-            self._recall_channeled(preset)
+            self._recall_channeled(preset, channel)
         elif "cc_values" in preset:
             # Legacy flat format — use channel 0 as fallback
-            self._recall_single(preset, 0)
+            self._recall_single(preset, 0, channel)
 
         # Send preset name back via SysEx
         if name:
@@ -900,8 +1025,11 @@ class MidiPresetService:
             self.midi_return.send(mido.Message("sysex", data=sysex_data))
             _log("  ->", f"Name: \"{name}\"")
 
-    def _recall_named(self, preset):
-        """Recall top-level named parameters via reverse_destinations."""
+    def _recall_named(self, preset, bank_channel):
+        """Recall top-level named parameters via reverse_destinations.
+
+        *bank_channel* is the 0-based bank channel used for tag filtering.
+        """
         for key, value in preset.items():
             if key in self._PRESET_RESERVED_KEYS:
                 continue
@@ -914,12 +1042,18 @@ class MidiPresetService:
             if (ch, cc_num) in self.recall_ignore:
                 _log("  --", f"{key} = {value}  (ignored)")
                 continue
+            if not self._bank_allows(bank_channel, ch, cc_num):
+                _log("  --", f"{key} = {value}  (filtered by tags)")
+                continue
             self._send_cc(cc_num, ch, value)
             self._set_dest(cc_num, ch, value)
             _log("  ->", f"{key} = {value}  (ch{ch + 1}/CC{cc_num})")
 
-    def _recall_single(self, preset, channel):
-        """Recall a legacy preset with flat cc_values (no channel grouping)."""
+    def _recall_single(self, preset, channel, bank_channel):
+        """Recall a legacy preset with flat cc_values (no channel grouping).
+
+        *bank_channel* is the 0-based bank channel used for tag filtering.
+        """
         pc = preset.get("program_change")
         if pc is not None:
             if self.midi_out:
@@ -933,12 +1067,18 @@ class MidiPresetService:
             if (channel, cc_num) in self.recall_ignore:
                 _log("  --", f"{self._cc_label(cc_num, channel)} = {value}  (ignored)")
                 continue
+            if not self._bank_allows(bank_channel, channel, cc_num):
+                _log("  --", f"{self._cc_label(cc_num, channel)} = {value}  (filtered by tags)")
+                continue
             self._send_cc(cc_num, channel, value)
             self._set_dest(cc_num, channel, value)
             _log("  ->", f"{self._cc_label(cc_num, channel)} = {value}")
 
-    def _recall_channeled(self, preset):
-        """Recall a preset with CCs grouped by channel."""
+    def _recall_channeled(self, preset, bank_channel):
+        """Recall a preset with CCs grouped by channel.
+
+        *bank_channel* is the 0-based bank channel used for tag filtering.
+        """
         for ch_str, ch_data in preset["channels"].items():
             ch = int(ch_str)  # YAML may store as string
             for cc_name, value in ch_data.get("cc_values", {}).items():
@@ -947,6 +1087,9 @@ class MidiPresetService:
                     continue
                 if (ch, cc_num) in self.recall_ignore:
                     _log("  --", f"{self._cc_label(cc_num, ch)} = {value}  (ignored)")
+                    continue
+                if not self._bank_allows(bank_channel, ch, cc_num):
+                    _log("  --", f"{self._cc_label(cc_num, ch)} = {value}  (filtered by tags)")
                     continue
                 self._send_cc(cc_num, ch, value)
                 self._set_dest(cc_num, ch, value)

@@ -48,6 +48,19 @@ manufacturer_id: 0x7D
 #   - ns_to_perf_filter
 #   - {channel: 1, cc: 7}
 
+# --- Bank Tags ------------------------------------------------------------------
+#
+# Controls which parameters are included when saving/recalling presets
+# in each bank (channel).  Tags are assigned to parameters in cc_sets.yaml
+# (group-level or per-entry) and in destinations.yaml (per-channel overrides).
+#
+# Parameters with no explicit tags get the implicit "default" tag.
+# Banks not listed here default to ["default"] — only untagged parameters.
+#
+# bank_tags:
+#   1: [default, synth, mix]         # ch1 bank saves/recalls these tags
+#   2: [default, synth, performance] # ch2 bank saves/recalls these tags
+
 # --- Persistent State -----------------------------------------------------------
 #
 # The service periodically saves all destination values, the current

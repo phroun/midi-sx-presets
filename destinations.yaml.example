@@ -11,6 +11,11 @@
 #
 # Conflict detection: if two different (channel, CC) pairs resolve to the
 # same name within one destination, a warning is logged at startup.
+#
+# Per-channel override entries (dict form) can also carry ``tags`` that
+# merge with the tags inherited from the cc_group:
+#
+#     85: {name: perf_out, default: 63, tags: [performance]}
 
 # Example (uncomment and customise for your setup):
 #

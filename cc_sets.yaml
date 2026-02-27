@@ -24,6 +24,9 @@
 # Plain strings (no default) are still valid — the engine falls back to
 # 64 for relative CCs and 0 for absolute CCs when no default is given.
 #
+# Tags can be specified per-entry or at the group level (see cc_sets.yaml.example).
+# Parameters with no tags get the implicit "default" tag.
+#
 # When using destinations, put a "default" set in cc_sets for any
 # destination that doesn't specify its own set.
 
