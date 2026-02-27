@@ -860,6 +860,8 @@ class MidiPresetService:
         for key, value in self.destination_states.items():
             parts = key.split("_")
             cc_num, ch = int(parts[0]), int(parts[1])
+            if cc_num == 0:
+                continue  # CC 0 is not a valid destination
             # Tag filtering: skip parameters whose tags don't match this bank
             if not self._bank_allows(channel, ch, cc_num):
                 skipped_count += 1
@@ -1390,6 +1392,9 @@ class MidiPresetService:
 
             # Determine target CC and channel
             target_cc = action["cc"]
+            if target_cc == 0:
+                continue  # CC 0 = no-pass; drop silently
+
             # Channel: YAML is 1-based, convert to 0-based for mido
             if "channel" in action:
                 target_ch = action["channel"] - 1
