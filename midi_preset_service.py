@@ -1242,7 +1242,7 @@ class MidiPresetService:
 
     # -- Sequential step counter sync ----------------------------------------
 
-    _SEQ_PULSE_DELAY = 0.01   # seconds between momentary pulses
+    _SEQ_PULSE_DELAY = 0.025  # seconds between momentary pulses
 
     def _sync_seq(self, name, defn, target_step):
         """Send reset pulse + (target_step − 1) next pulses to hardware."""
