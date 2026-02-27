@@ -903,6 +903,20 @@ class MidiPresetService:
         name = preset.get("name", f"ch{ch + 1}/{note}")
         _log("PROTECT", f"{name} — {state}")
 
+    def _toggle_write_protect(self, channel, note):
+        """Toggle write-protection on a specific preset identified by channel/note."""
+        bank = self.presets.get(channel, {})
+        preset = bank.get(note)
+        if preset is None:
+            _log("WARN", f"Preset ch{channel + 1}/{note} not found — nothing to protect.")
+            return
+        currently_locked = preset.get("read_only", False)
+        preset["read_only"] = not currently_locked
+        self._save_preset_to_disk(channel, note)
+        state = "LOCKED" if not currently_locked else "UNLOCKED"
+        name = preset.get("name", f"ch{channel + 1}/{note}")
+        _log("PROTECT", f"{name} — {state}")
+
     def _cmd_load_preset(self):
         self.load_mode = True
         _log("LOAD", "Load mode — send a note-on to select the preset to recall.")
@@ -1789,6 +1803,7 @@ class MidiPresetService:
         Rec×1 + Play  → save into most recently loaded/saved preset
         Rec×3 + Stop  → switch to pass-through mode
         Rec×3 + Play  → switch to pass-through mode
+        Rec×6 + note  → toggle write-protect on that note's preset
         Rec×6 + Play  → disable write-protect on last preset
         Rec×6 + Stop  → enable write-protect on last preset
         Play          → load mode (next note recalls preset)
@@ -1804,7 +1819,7 @@ class MidiPresetService:
             elif self.rec_counter == 3:
                 _log("TRANS", "Rec×3 — press Stop or Play for pass-through")
             elif self.rec_counter == 6:
-                _log("TRANS", "Rec×6 — Play=unlock / Stop=lock last preset")
+                _log("TRANS", "Rec×6 — note=toggle / Play=unlock / Stop=lock last preset")
             else:
                 _log("TRANS", f"Rec (counter={self.rec_counter})")
 
@@ -1927,6 +1942,10 @@ class MidiPresetService:
 
         # Note-on (velocity > 0)
         if msg.type == "note_on" and msg.velocity > 0:
+            if self.intercept_mode and self.rec_counter == 6:
+                self.rec_counter = 0
+                self._toggle_write_protect(msg.channel, msg.note)
+                return  # Intercepted
             if self.intercept_mode and self.rec_counter == 1:
                 self.rec_counter = 0
                 self.preset_cursor[msg.channel] = msg.note
