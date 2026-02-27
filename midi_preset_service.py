@@ -676,6 +676,15 @@ class MidiPresetService:
                         if "seq_max" in action:
                             defn["max"] = action["seq_max"]
 
+        # Build set of (ch, cc) pairs used by seq counters — these are
+        # momentary control CCs and must not be sent during normal CC recall.
+        self.seq_ccs = set()
+        for defn in self.seq_defs.values():
+            if defn.get("reset_cc") is not None and defn.get("reset_ch") is not None:
+                self.seq_ccs.add((defn["reset_ch"], defn["reset_cc"]))
+            if defn.get("next_cc") is not None and defn.get("next_ch") is not None:
+                self.seq_ccs.add((defn["next_ch"], defn["next_cc"]))
+
         # Build lookup sets for fast detection
         self.shift_ccs = {s["cc"] for s in self.shift_defs}
         self.joystick_ccs = set()
@@ -900,6 +909,8 @@ class MidiPresetService:
             cc_num, ch = int(parts[0]), int(parts[1])
             if cc_num == 0:
                 continue  # CC 0 is not a valid destination
+            if (ch, cc_num) in self.seq_ccs:
+                continue  # seq CCs are momentary — saved via seq_states
             # Tag filtering: skip parameters whose tags don't match this bank
             if not self._bank_allows(channel, ch, cc_num):
                 skipped_count += 1
@@ -1104,6 +1115,8 @@ class MidiPresetService:
             if (ch, cc_num) in self.recall_ignore:
                 _log("  --", f"{key} = {value}  (ignored)")
                 continue
+            if (ch, cc_num) in self.seq_ccs:
+                continue  # seq CCs are handled by _recall_seq_states
             if not self._bank_allows(bank_channel, ch, cc_num):
                 _log("  --", f"{key} = {value}  (filtered by tags)")
                 continue
@@ -1129,6 +1142,8 @@ class MidiPresetService:
             if (channel, cc_num) in self.recall_ignore:
                 _log("  --", f"{self._cc_label(cc_num, channel)} = {value}  (ignored)")
                 continue
+            if (channel, cc_num) in self.seq_ccs:
+                continue  # seq CCs are handled by _recall_seq_states
             if not self._bank_allows(bank_channel, channel, cc_num):
                 _log("  --", f"{self._cc_label(cc_num, channel)} = {value}  (filtered by tags)")
                 continue
@@ -1150,6 +1165,8 @@ class MidiPresetService:
                 if (ch, cc_num) in self.recall_ignore:
                     _log("  --", f"{self._cc_label(cc_num, ch)} = {value}  (ignored)")
                     continue
+                if (ch, cc_num) in self.seq_ccs:
+                    continue  # seq CCs are handled by _recall_seq_states
                 if not self._bank_allows(bank_channel, ch, cc_num):
                     _log("  --", f"{self._cc_label(cc_num, ch)} = {value}  (filtered by tags)")
                     continue
@@ -1242,8 +1259,7 @@ class MidiPresetService:
 
     # -- Sequential step counter sync ----------------------------------------
 
-    _SEQ_PULSE_DELAY = 0.025  # seconds: hold time for momentary pulse (127→0)
-    _SEQ_STEP_DELAY  = 0.05   # seconds: gap between consecutive pulses
+    _SEQ_PULSE_DELAY = 0.100  # seconds between all seq sync steps
 
     def _sync_seq(self, name, defn, target_step):
         """Send reset pulse + (target_step − 1) next pulses to hardware."""
@@ -1264,7 +1280,7 @@ class MidiPresetService:
         # Next pulses
         nexts = max(0, target_step - 1)
         for _ in range(nexts):
-            time.sleep(self._SEQ_STEP_DELAY)
+            time.sleep(self._SEQ_PULSE_DELAY)
             self._send_cc(next_cc, next_ch, 127)
             time.sleep(self._SEQ_PULSE_DELAY)
             self._send_cc(next_cc, next_ch, 0)
