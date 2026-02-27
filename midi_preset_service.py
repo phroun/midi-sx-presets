@@ -621,7 +621,6 @@ class MidiPresetService:
                     if target is None:
                         _log("WARN", f"CC mapping source {source_cc}: "
                              f"parameter '{param}' not found in destinations")
-                        expanded.append(action)
                         continue
                     ch, cc_num = target
                     action["cc"] = cc_num
@@ -633,7 +632,6 @@ class MidiPresetService:
                     if not targets:
                         _log("WARN", f"CC mapping source {source_cc}: "
                              f"auto '{raw}' not found in destinations")
-                        expanded.append(action)
                         continue
                     for ch, cc_num in targets:
                         copy = dict(action)
