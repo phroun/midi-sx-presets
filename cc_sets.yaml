@@ -32,31 +32,35 @@ cc_sets:
     3:  {name: to_duck_out,    default: 0}
     7:  {name: to_perf_filter, default: 0}
     9:  {name: to_bypass_duck, default: 0}
-    10: {name: pan,            default: 64}
+    10: {name: pan,            default: 63}
     11: {name: to_dsp,         default: 0}
-#    12: {name: to_loop_a,      default: 0}
-#    13: {name: to_loop_b,      default: 0}
-    102: {name: to_loop_a,    default: 0}
-    103: {name: to_loop_b,    default: 0}
+    102: {name: to_loop_a,    default: 0,   tags: [looper]}
+    103: {name: to_loop_b,    default: 0,   tags: [looper]}
   loop_ccs:
-    1: {name: loop_a_speed,   default: 63}
-    2: {name: loop_a_length,  default: 127}
-    3: {name: loop_a_start,   default: 0}
-    4: {name: loop_b_speed,   default: 63}
-    5: {name: loop_b_length,  default: 127}
-    6: {name: loop_b_start,   default: 0}
+    1: {name: loop_a_speed,   default: 63,  tags: [looper]}
+    2: {name: loop_a_length,  default: 127, tags: [looper]}
+    3: {name: loop_a_start,   default: 0,   tags: [looper]}
+    4: {name: loop_b_speed,   default: 63,  tags: [looper]}
+    5: {name: loop_b_length,  default: 127, tags: [looper]}
+    6: {name: loop_b_start,   default: 0,   tags: [looper]}
+    9: {name: loop_reset,     default: 0,   tags: [looper]}
+    10: {name: loop_a_retrig,  default: 0,  tags: [looper]}
+    11: {name: loop_a_record,  default: 0,  tags: [looper]}
+    12: {name: loop_a_erase,  default: 0,   tags: [looper]}
+    13: {name: loop_b_retrig,  default: 0,  tags: [looper]}
+    14: {name: loop_b_record,  default: 0,  tags: [looper]}
+    15: {name: loop_b_erase,  default: 0,   tags: [looper]}
+    71: {name: poly_morph, default: 63}
   pad_ccs:
     69: {name: solo_mode,     default: 0}
   polysynth_ccs:
     1:  {name: vcf_cutoff,         default: 63}
     3:  {name: to_duck_out,        default: 0}
-    7:  {name: to_perf_filter,     default: 0}
+    7:  {name: to_perf_filter,     default: 110}
     9:  {name: to_bypass_duck,     default: 0}
     10: {name: stereo_pan,         default: 63}
     11: {name: to_dsp,             default: 0}
-#    12: {name: to_loop_a,          default: 0}
-#    13: {name: to_loop_b,          default: 0}
-    71: {name: morph,          default: 0}
+#    71: {name: morph,          default: 0}
     72: {name: vcf_release,    default: 32}
     73: {name: vcf_attack,     default: 32}
     74: {name: vcf_sustain,    default: 32}
@@ -66,15 +70,15 @@ cc_sets:
     78: {name: attack,        default: 0}
     79: {name: sustain,       default: 48}
     80: {name: decay,         default: 10}
-    86: {name: tremolo_rate,  default: 64}
-    87: {name: wah_rate,      default: 64}
-    88: {name: vibrato_rate,  default: 64}
-    89: {name: pwm_rate,      default: 64}
+    86: {name: tremolo_rate,  default: 110}
+    87: {name: wah_rate,      default: 21}
+    88: {name: vibrato_rate,  default: 78}
+    89: {name: pwm_rate,      default: 63}
     90: {name: to_delay,      default: 0}
     91: {name: to_reverb,     default: 0}
-    92: {name: tremolo_depth, default: 64}
-    93: {name: wah_depth,     default: 64}
-    94: {name: vibrato_depth, default: 64}
-    95: {name: pwm_depth,     default: 64}
-    102: {name: to_loop_a,    default: 0}
-    103: {name: to_loop_b,    default: 0}
+    92: {name: tremolo_depth, default: 0}
+    93: {name: wah_depth,     default: 0}
+    94: {name: vibrato_depth, default: 0}
+    95: {name: pwm_depth,     default: 0}
+    102: {name: to_loop_a,    default: 0,   tags: [looper]}
+    103: {name: to_loop_b,    default: 0,   tags: [looper]}

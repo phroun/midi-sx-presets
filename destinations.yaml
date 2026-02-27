@@ -37,13 +37,11 @@ poly:
   channels:
     2:
       cc_group: polysynth_ccs
-      85: {name: global_perf_out, default: 63}
-    4:
-      prefix: poly
-      1: {poly_vcf_cutoff, default: 63}
     11:
       prefix: perf
       cc_group: mix_ccs
+      vibrato_rate: {default: 78}
+      to_duck_out: {default: 127}
 mono:
   prefix: mono
   channels:
@@ -52,6 +50,7 @@ mono:
     5:
       prefix: bass
       cc_group: mix_ccs
+      to_duck_out: {default: 110}
     10:
       prefix: pads
       cc_group: pad_ccs
@@ -60,12 +59,17 @@ loop_a:
   channels:
     3:
       cc_group: mix_ccs
+      to_duck_out: {default: 0}
+      to_perf_filter: {default: 63}
 loop_b:
   prefix: loop_b
   channels:
     4:
       cc_group: mix_ccs
+      to_duck_out: {default: 0}
+      to_perf_filter: {default: 63}
 loop:
   channels:
     14:
       cc_group: loop_ccs
+      poly_morph: {default: 63}
