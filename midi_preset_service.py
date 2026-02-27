@@ -109,7 +109,8 @@ class MidiPresetService:
         (self.cc_sets,
          self.cc_default_set,
          self.cc_set_defaults,
-         self.cc_set_tags) = self._load_cc_sets()
+         self.cc_set_tags,
+         self.cc_set_explicit_tags) = self._load_cc_sets()
         self.destinations_map = self._load_destinations()
         (self.resolved_destinations,
          self.reverse_destinations,
@@ -268,7 +269,9 @@ class MidiPresetService:
 
     @staticmethod
     def _normalize_cc_set(raw_set, group_tags=None):
-        """Normalise a CC name set, returning (names_dict, defaults_dict, tags_dict).
+        """Normalise a CC name set.
+
+        Returns ``(names_dict, defaults_dict, tags_dict, explicit_tag_ccs)``.
 
         Entries may be plain strings or dicts with ``name`` and optional
         ``default`` and ``tags``::
@@ -279,10 +282,14 @@ class MidiPresetService:
         *group_tags* (list or None) are inherited by every entry in the set.
         Per-entry tags **replace** group_tags.  Entries with no tags at all
         inherit group_tags, or get the implicit ``["default"]`` tag.
+
+        *explicit_tag_ccs* is the set of CC numbers that had their own
+        ``tags`` key (as opposed to inheriting from *group_tags*).
         """
         names = {}
         defaults = {}
         tags = {}
+        explicit_tag_ccs = set()
         base_tags = set(group_tags) if group_tags else set()
         for cc_num, entry in (raw_set or {}).items():
             cc_num = int(cc_num)
@@ -293,6 +300,7 @@ class MidiPresetService:
                 entry_tags = entry.get("tags")
                 if entry_tags:
                     tags[cc_num] = set(entry_tags)
+                    explicit_tag_ccs.add(cc_num)
                 elif base_tags:
                     tags[cc_num] = set(base_tags)
                 else:
@@ -300,12 +308,13 @@ class MidiPresetService:
             else:
                 names[cc_num] = str(entry)
                 tags[cc_num] = set(base_tags) if base_tags else {"default"}
-        return names, defaults, tags
+        return names, defaults, tags, explicit_tag_ccs
 
     def _load_cc_sets(self):
         """Load CC name mappings.
 
-        Returns ``(name_sets, default_names, cc_set_defaults, cc_set_tags)``.
+        Returns ``(name_sets, default_names, cc_set_defaults, cc_set_tags,
+        cc_set_explicit_tags)``.
 
         *name_sets* and *default_names* are string-only dicts as before.
         *cc_set_defaults* maps ``set_name → {cc_num: default_value}``
@@ -313,6 +322,8 @@ class MidiPresetService:
         *cc_set_tags* maps ``set_name → {cc_num: set_of_tags}``
         for per-CC tag sets (per-entry tags replace group-level tags;
         untagged entries inherit group tags or get ``{"default"}``).
+        *cc_set_explicit_tags* maps ``set_name → set_of_cc_nums``
+        for CCs that had explicit per-entry tags in the cc_set.
 
         Named sets may carry a ``tags`` key at the group level::
 
@@ -350,27 +361,31 @@ class MidiPresetService:
                     name_sets = {}
                     cc_set_defaults = {}
                     cc_set_tags = {}
+                    cc_set_explicit = {}
                     for set_name, raw_set in raw.items():
                         # Extract group-level tags before normalizing
                         group_tags = None
                         if isinstance(raw_set, dict):
                             group_tags = raw_set.pop("tags", None)
-                        names, defs, tags = self._normalize_cc_set(
+                        names, defs, tags, explicit = self._normalize_cc_set(
                             raw_set, group_tags=group_tags)
                         name_sets[set_name] = names
                         if defs:
                             cc_set_defaults[set_name] = defs
                         if tags:
                             cc_set_tags[set_name] = tags
+                        if explicit:
+                            cc_set_explicit[set_name] = explicit
                     return (name_sets, name_sets.get("default", {}),
-                            cc_set_defaults, cc_set_tags)
+                            cc_set_defaults, cc_set_tags, cc_set_explicit)
                 else:
                     # Flat format — single set
-                    names, defs, tags = self._normalize_cc_set(raw)
+                    names, defs, tags, explicit = self._normalize_cc_set(raw)
                     cc_set_defaults = {"default": defs} if defs else {}
                     cc_set_tags = {"default": tags} if tags else {}
+                    cc_set_explicit = {"default": explicit} if explicit else {}
                     return ({"default": names}, names,
-                            cc_set_defaults, cc_set_tags)
+                            cc_set_defaults, cc_set_tags, cc_set_explicit)
         # Create default file (flat format)
         default_names = {
             1: "modulation",
@@ -381,10 +396,10 @@ class MidiPresetService:
             74: "filter_cutoff",
         }
         _yaml_dump({"cc_sets": default_names}, path)
-        return {"default": default_names}, default_names, {}, {}
+        return {"default": default_names}, default_names, {}, {}, {}
 
     _DEST_RESERVED_KEYS   = {"prefix", "channels"}
-    _CH_RESERVED_KEYS     = {"cc_group", "prefix"}
+    _CH_RESERVED_KEYS     = {"cc_group", "prefix", "tags"}
     _PRESET_RESERVED_KEYS = {"name", "read_only", "channels",
                              "program_change", "cc_values", "seq_states"}
 
@@ -455,6 +470,11 @@ class MidiPresetService:
                                   if group_name else {})
                 group_tags = (self.cc_set_tags.get(group_name, {})
                               if group_name else {})
+                # Channel-level tags override the cc_set's inherited tags
+                # but leave per-entry explicit tags from the cc_set alone.
+                ch_level_tags = ch_cfg.get("tags")
+                explicit_ccs = (self.cc_set_explicit_tags.get(group_name, set())
+                                if group_name else set())
                 if group_name and group_name in self.cc_sets:
                     for cc_num, raw_name in self.cc_sets[group_name].items():
                         cc_num = int(cc_num)
@@ -464,8 +484,11 @@ class MidiPresetService:
                         # Propagate default from cc_set
                         if cc_num in group_defaults:
                             defaults[(ch, cc_num)] = group_defaults[cc_num]
-                        # Propagate tags from cc_set
-                        if cc_num in group_tags:
+                        # Propagate tags: channel-level tags override inherited,
+                        # but explicit per-entry tags from cc_set are kept.
+                        if ch_level_tags and cc_num not in explicit_ccs:
+                            ch_tags[cc_num] = set(ch_level_tags)
+                        elif cc_num in group_tags:
                             ch_tags[cc_num] = set(group_tags[cc_num])
                         else:
                             ch_tags[cc_num] = {"default"}
@@ -492,11 +515,10 @@ class MidiPresetService:
                             ch_names[cc_num] = str(value["name"])
                         if "default" in value:
                             defaults[(ch, cc_num)] = int(value["default"])
-                        # Per-channel override tags merge with inherited tags
+                        # Per-CC override tags replace inherited tags
                         override_tags = value.get("tags")
                         if override_tags:
-                            existing = ch_tags.get(cc_num, set())
-                            ch_tags[cc_num] = existing | set(override_tags)
+                            ch_tags[cc_num] = set(override_tags)
                     else:
                         ch_names[cc_num] = str(value)
 
