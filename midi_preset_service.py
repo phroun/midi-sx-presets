@@ -158,6 +158,10 @@ class MidiPresetService:
         self.no_input = no_input          # --no-input: skip routing.inputs
         self.no_iac_input = no_iac_input  # --no-iac-input: skip routing.iac_input
 
+        # Sequential step counters (populated by _load_cc_mappings)
+        self.seq_states = {}   # {name: current_step (1-based)}
+        self.seq_defs = {}     # {name: {reset_cc, reset_ch, next_cc, next_ch, max}}
+
         # MIDI ports (opened in run())
         self.midi_in = None
         self.midi_out = None
@@ -196,6 +200,12 @@ class MidiPresetService:
         elif saved_cursor is not None:
             # Legacy: single note — assign to channel 0
             self.preset_cursor = {0: int(saved_cursor)}
+        saved_seq = data.get("seq_states")
+        if isinstance(saved_seq, dict):
+            self.seq_states.update(
+                {k: int(v) for k, v in saved_seq.items()
+                 if isinstance(v, (int, float))}
+            )
         if "intercept_mode" in data:
             self.intercept_mode = bool(data["intercept_mode"])
         if "shift_state" in data:
@@ -213,6 +223,7 @@ class MidiPresetService:
         """Dump current runtime state to disk (atomic write)."""
         data = {
             "destination_states": dict(self.destination_states),
+            "seq_states": dict(self.seq_states),
             "preset_cursor": self.preset_cursor,
             "intercept_mode": self.intercept_mode,
             "shift_state": self.shift_state,
@@ -371,7 +382,7 @@ class MidiPresetService:
     _DEST_RESERVED_KEYS   = {"prefix", "channels"}
     _CH_RESERVED_KEYS     = {"cc_group", "prefix"}
     _PRESET_RESERVED_KEYS = {"name", "read_only", "channels",
-                             "program_change", "cc_values"}
+                             "program_change", "cc_values", "seq_states"}
 
     def _load_destinations(self):
         """Load the optional destinations map (destinations.yaml).
@@ -644,6 +655,26 @@ class MidiPresetService:
                     expanded.append(action)
             self.cc_mappings[source_cc] = expanded
 
+        # Build seq definitions from mapping actions
+        self.seq_defs = {}
+        for source_cc, actions in self.cc_mappings.items():
+            for action in actions:
+                for seq_key in ("seq_reset", "seq_next"):
+                    if seq_key not in action:
+                        continue
+                    name = action[seq_key]
+                    defn = self.seq_defs.setdefault(name, {"max": 4})
+                    ch = action.get("channel")
+                    ch_0 = (ch - 1) if ch is not None else None
+                    if seq_key == "seq_reset":
+                        defn["reset_cc"] = action.get("cc")
+                        defn["reset_ch"] = ch_0
+                    else:
+                        defn["next_cc"] = action.get("cc")
+                        defn["next_ch"] = ch_0
+                        if "seq_max" in action:
+                            defn["max"] = action["seq_max"]
+
         # Build lookup sets for fast detection
         self.shift_ccs = {s["cc"] for s in self.shift_defs}
         self.joystick_ccs = set()
@@ -851,9 +882,10 @@ class MidiPresetService:
         preset["name"] = existing.get("name", f"Preset {note}")
         preset["read_only"] = existing.get("read_only", False)
         preset.pop("channel", None)  # strip legacy field
-        # Clear stale CC data — we'll rebuild from current state
+        # Clear stale data — we'll rebuild from current state
         preset.pop("channels", None)
         preset.pop("cc_values", None)
+        preset.pop("seq_states", None)
         for key in list(preset):
             if key not in self._PRESET_RESERVED_KEYS and key in self.reverse_destinations:
                 del preset[key]
@@ -883,6 +915,10 @@ class MidiPresetService:
         if unknown_channels:
             preset["channels"] = {ch: {"cc_values": ccs}
                                   for ch, ccs in unknown_channels.items()}
+
+        # Include sequential step counter positions
+        if self.seq_states:
+            preset["seq_states"] = dict(self.seq_states)
 
         self.presets.setdefault(channel, {})[note] = preset
         self._save_preset_to_disk(channel, note)
@@ -1039,6 +1075,10 @@ class MidiPresetService:
             # Legacy flat format — use channel 0 as fallback
             self._recall_single(preset, 0, channel)
 
+        # 3) Sequential step counter positions
+        if "seq_states" in preset:
+            self._recall_seq_states(preset["seq_states"])
+
         # Send preset name back via SysEx
         if name:
             name_bytes = self._encode_name(name)
@@ -1167,6 +1207,17 @@ class MidiPresetService:
         if filled:
             _log("BOOT", f"Filled {filled} destination(s) from defaults")
         self._sync_all_destinations()
+        # Sync sequential step counters
+        if self.seq_defs:
+            # Fill defaults for any seq not yet in seq_states
+            for name in self.seq_defs:
+                if name not in self.seq_states:
+                    self.seq_states[name] = 1
+            for name, step in self.seq_states.items():
+                defn = self.seq_defs.get(name)
+                if defn:
+                    self._sync_seq(name, defn, step)
+            _log("BOOT", f"Synced {len(self.seq_states)} seq state(s)")
 
     def _sync_all_destinations(self):
         """Re-send all current destination values (e.g. after MIDI reset)."""
@@ -1187,6 +1238,50 @@ class MidiPresetService:
                              control=cc,
                              value=value)
             )
+
+    # -- Sequential step counter sync ----------------------------------------
+
+    _SEQ_PULSE_DELAY = 0.01   # seconds between momentary pulses
+
+    def _sync_seq(self, name, defn, target_step):
+        """Send reset pulse + (target_step − 1) next pulses to hardware."""
+        reset_cc = defn.get("reset_cc")
+        reset_ch = defn.get("reset_ch")
+        next_cc = defn.get("next_cc")
+        next_ch = defn.get("next_ch")
+        if reset_cc is None or reset_ch is None:
+            _log("WARN", f"Seq '{name}': missing reset CC/channel — skipped")
+            return
+        if next_cc is None or next_ch is None:
+            _log("WARN", f"Seq '{name}': missing next CC/channel — skipped")
+            return
+        # Reset pulse
+        self._send_cc(reset_cc, reset_ch, 127)
+        time.sleep(self._SEQ_PULSE_DELAY)
+        self._send_cc(reset_cc, reset_ch, 0)
+        # Next pulses
+        nexts = max(0, target_step - 1)
+        for _ in range(nexts):
+            time.sleep(self._SEQ_PULSE_DELAY)
+            self._send_cc(next_cc, next_ch, 127)
+            time.sleep(self._SEQ_PULSE_DELAY)
+            self._send_cc(next_cc, next_ch, 0)
+        _log("SEQ", f"'{name}' synced to step {target_step} "
+             f"(reset + {nexts} next{'s' if nexts != 1 else ''})")
+
+    def _recall_seq_states(self, saved_seqs):
+        """Restore sequential step positions by pulsing reset + next CCs."""
+        for name, target_step in saved_seqs.items():
+            defn = self.seq_defs.get(name)
+            if not defn:
+                _log("WARN", f"Seq '{name}' not found in cc_mappings — skipped")
+                continue
+            target_step = int(target_step)
+            if target_step < 1:
+                target_step = 1
+            self._sync_seq(name, defn, target_step)
+            self.seq_states[name] = target_step
+        self._mark_dirty()
 
     # -- Center-snap ("wiggle to center") ------------------------------------
 
@@ -1393,6 +1488,29 @@ class MidiPresetService:
             # Shift state match
             masked = self.shift_state & action["mask"]
             if masked != action["compare"]:
+                continue
+
+            # Sequential step counter actions (momentary trigger)
+            if "seq_reset" in action or "seq_next" in action:
+                seq_name = action.get("seq_reset") or action.get("seq_next")
+                if msg.value > 0:
+                    if "seq_reset" in action:
+                        self.seq_states[seq_name] = 1
+                        _log("SEQ", f"'{seq_name}' reset to 1")
+                    else:
+                        seq_max = action.get("seq_max",
+                                             self.seq_defs.get(seq_name, {}).get("max", 4))
+                        current = self.seq_states.get(seq_name, 1)
+                        new_val = current + 1 if current < seq_max else 1
+                        self.seq_states[seq_name] = new_val
+                        _log("SEQ", f"'{seq_name}' -> {new_val}")
+                    self._mark_dirty()
+                # Forward the momentary CC to hardware
+                target_cc = action.get("cc")
+                if target_cc:
+                    target_ch = (action["channel"] - 1 if "channel" in action
+                                 else msg.channel)
+                    self._send_cc(target_cc, target_ch, msg.value)
                 continue
 
             # Determine target CC and channel
@@ -2088,6 +2206,12 @@ class MidiPresetService:
                      f"max={params['max_polyphony']} "
                      f"fallback={params['fallback_priority']} "
                      f"replace={params['replace_priority']}")
+        if self.seq_defs:
+            _log("INIT", f"Seq counters : {len(self.seq_defs)} defined")
+            for sname, sdef in self.seq_defs.items():
+                _log("INIT", f"  '{sname}': max={sdef.get('max', '?')}, "
+                     f"reset=CC{sdef.get('reset_cc', '?')}/ch{(sdef.get('reset_ch', 0) or 0) + 1}, "
+                     f"next=CC{sdef.get('next_cc', '?')}/ch{(sdef.get('next_ch', 0) or 0) + 1}")
         _log("INIT", f"Shift CCs    : {sorted(self.shift_ccs)} | Joystick CCs: {sorted(self.joystick_ccs)}")
         tmode = "intercept" if self.intercept_mode else "passthrough"
         _log("INIT", f"Transport    : {tmode}")
