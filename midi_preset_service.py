@@ -277,8 +277,8 @@ class MidiPresetService:
             7: {name: to_perf_filter, default: 127, tags: [mix]}
 
         *group_tags* (list or None) are inherited by every entry in the set.
-        Per-entry tags merge with group_tags.  Entries with no tags at all
-        (and no group_tags) get the implicit ``["default"]`` tag.
+        Per-entry tags **replace** group_tags.  Entries with no tags at all
+        inherit group_tags, or get the implicit ``["default"]`` tag.
         """
         names = {}
         defaults = {}
@@ -292,7 +292,7 @@ class MidiPresetService:
                     defaults[cc_num] = int(entry["default"])
                 entry_tags = entry.get("tags")
                 if entry_tags:
-                    tags[cc_num] = base_tags | set(entry_tags)
+                    tags[cc_num] = set(entry_tags)
                 elif base_tags:
                     tags[cc_num] = set(base_tags)
                 else:
@@ -311,8 +311,8 @@ class MidiPresetService:
         *cc_set_defaults* maps ``set_name → {cc_num: default_value}``
         for entries that specified a ``default``.
         *cc_set_tags* maps ``set_name → {cc_num: set_of_tags}``
-        for per-CC tag sets (group-level tags merged with per-entry tags;
-        untagged entries get ``{"default"}``).
+        for per-CC tag sets (per-entry tags replace group-level tags;
+        untagged entries inherit group tags or get ``{"default"}``).
 
         Named sets may carry a ``tags`` key at the group level::
 
