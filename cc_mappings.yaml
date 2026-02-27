@@ -138,7 +138,7 @@ cc_mappings:
     - {mask: 0x008C, compare: 0x0088, type: relative, cc: 3, parameter: loop_b_to_duck_out}  # Vert-Up Shift + "B"
     - {mask: 0x0060, compare: 0x0040, type: relative, cc: 3, parameter: loop_b_to_duck_out}  # Vert-Rt Shift + "B"
     # PWM Rate:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 89, default: 64, name: "PWM Rate"}  # Poly, BlueShift = FX
+    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, default: 64, cc: 89, name: "PWM Rate"}  # Poly, BlueShift = FX
     # Attack:
     - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 78, default: 0, name: "Amp-Attack"}  # Poly, GreenShift = Envelopes
 
@@ -155,8 +155,8 @@ cc_mappings:
     # Loop to Loop:
     - {mask: 0x0060, compare: 0x0020, type: relative, cc: 102, default: 127, channel: 3, name: "To Loop A"}  # "A", Poly, Unshifted
     - {mask: 0x0060, compare: 0x0040, type: relative, cc: 102, default: 127, channel: 4, name: "To Loop A"}  # "B", Poly, Unshifted
-    # Vibrato Rate:
-    - {from_channel: 2, mask: 0x008F, compare: 0x0001, type: relative, cc: 88, default: 64, name: "Vibrato Rate"}  # PolyBlue, Shift+"A", Vibato Rate
+    # Vibrato Rate, cc: 88, name: "Vibrato Rate
+    - {from_channel: 2, mask: 0x008F, compare: 0x0001, type: relative, default: 78, parameter: poly_vibrato_rate}  # PolyBlue, Shift+"A", Vibato Rate
     # Vibrato Attack:
     - {from_channel: 2, mask: 0x008F, compare: 0x0081, type: relative, cc: 76, default: 64, name: "Vibrato Attack"}  # PolyBlue, Shift+"B", Vibrato Attack
     # Decay:
@@ -184,7 +184,7 @@ cc_mappings:
     # Volume To Perform:
     - {from_channel: 1, mask: 0x006F, compare: 0x0000, type: relative, cc: 7, channel: 5, name: "Vol to Perform"}  # Mono, Unshifted = Bass Filter
     - {from_channel: 1, mask: 0x006F, compare: 0x0002, type: relative, cc: 7, channel: 1, name: "Vol to Perform"}  # Mono, GreenShifted = Raw Mono
-    - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 7, default: 127, name: "Vol to Perform"}  # Poly, Unshifted = Raw Poly
+    - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 7, parameter: poly_to_perf_filter, default: 127}  # Poly, Unshifted = Raw Poly
     - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 71, channel: 14, name: "Wave Morph"}  # Poly, TealShifted (Wave Morph)
     # Loop A to Perform:
     - {mask: 0x00EC, compare: 0x0004, type: relative, cc: 7, default: 127, channel: 3, name: "Loop A to Peform"}  # Vert-Dn Shift + "A"
@@ -212,9 +212,9 @@ cc_mappings:
     - {mask: 0x00EC, compare: 0x0084, type: relative, cc: 10, channel: 4, name: "Loop B Stereo Pan", center: true}  # Vert-Up Shift + "B"
     - {mask: 0x00EC, compare: 0x0088, type: relative, cc: 10, channel: 4, name: "Loop B Stereo Pan", center: true}  # Vert-Dn Shift + "B"
     # Loop A Speed:
-    - {mask: 0x0068, compare: 0x0020, type: relative, cc: 1, default: 64, channel: 14, name: "Loop A Speed"}  # Holding "A"
+    - {mask: 0x0068, compare: 0x0020, type: relative, cc: 1, default: 31, min: 0, max: 63, channel: 14, name: "Loop A Speed", center: 31}  # Holding "A"
     # Loop B Speed:
-    - {mask: 0x0068, compare: 0x0040, type: relative, cc: 4, default: 64, channel: 14, name: "Loop B Speed"}  # Holding "B"
+    - {mask: 0x0068, compare: 0x0040, type: relative, cc: 4, default: 31, min: 0, max: 63, channel: 14, name: "Loop B Speed", center: 31}  # Holding "B"
     # PWM Amount:
     - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 95, default: 64, name: "PWM Amount"}  # Poly, BlueShift
     # Filter Attack:
@@ -237,7 +237,7 @@ cc_mappings:
     # Loop B Length:
     - {mask: 0x0068, compare: 0x0040, type: relative, cc: 5, default: 127, channel: 14, name: "Loop B Length"}  # Holding "B"
     # Vibato Amount:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 94, default: 64, name: "Vibrato Amount"}  # Poly, BlueShift
+    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 94, default: 0, min: 0, max: 48, name: "Vibrato Amount"}  # Poly, BlueShift
     # Filter Decay:
     - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 75, default: 32, name: "F-Decay"}  # Poly, GreenShift = Envelopes
 
@@ -263,10 +263,10 @@ cc_mappings:
     - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 74, default: 32, name: "F-Sustain"}  # Poly, GreenShift = Envelopes
 
   77:  # K8
-    # Perform Dry Out (Global)
-    - {from_channel: 1, mask: 0x006D, compare: 0x0000, type: relative, cc: 3, default: 127, channel: 11, name: "Perform Out Global"}  # Mono, Unshift or Green
-    - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 3, default: 127, channel: 11, name: "Perform Out Global"}  # Poly, Unshifted
-    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 3, default: 127, channel: 11, name: "Perform Out Global"}  # Poly, Unshifted
+    # Perform Dry Out (Global), channel: 11, name: "Perform Out Global"
+    - {from_channel: 1, mask: 0x006D, compare: 0x0000, type: relative, cc: 3, default: 127, parameter: perf_to_duck_out}  # Mono, Unshift or Green
+    - {from_channel: 2, mask: 0x006F, compare: 0x0000, type: relative, cc: 3, default: 127, parameter: perf_to_duck_out}  # Poly, Unshifted
+    - {from_channel: 2, mask: 0x006F, compare: 0x0003, type: relative, cc: 3, default: 127, parameter: perf_to_duck_out}  # Poly, Unshifted
     # From Perform to Loop A:
     - {mask: 0x008C, compare: 0x0004, type: relative, cc: 102, default: 0, channel: 11, name: "Perform to Loop A"}  # Vertical Shift + "A"
     - {mask: 0x008C, compare: 0x0008, type: relative, cc: 102, default: 0, channel: 11, name: "Perform to Loop A"}  # Vertical Shift + "A"
@@ -387,6 +387,7 @@ note_mappings:
     fallback_priority: most_recent
     replace_priority: lowest
     name: "Bass1"
+    transpose: -12
     
   - low: 0
     high: 127
@@ -423,9 +424,9 @@ note_mappings:
     compare: 0x0001
     from_channel: 4
     monophonic: bass
-    transpose: -12
+    transpose: -24
     channel: 1
-    name: "Bass4"
+    name: "Lead4"
 
   - low: 0
     high: 59
