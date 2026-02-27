@@ -63,49 +63,9 @@ loop_b_to_delay: 0
 loop_b_to_reverb: 0
 poly_morph: 127
 channels:
-  0:
-    cc_values:
-      1: 12
-  2:
-    cc_values:
-      1: 0
-  3:
-    cc_values:
-      1: 127
-  4:
-    cc_values:
-      1: 0
-  5:
-    cc_values:
-      1: 0
-  6:
-    cc_values:
-      1: 0
-  7:
-    cc_values:
-      1: 0
-  8:
-    cc_values:
-      1: 0
-  9:
-    cc_values:
-      1: 0
-  10:
-    cc_values:
-      1: 0
-  11:
-    cc_values:
-      1: 0
   12:
     cc_values:
-      1: 0
       46: 94
-  14:
-    cc_values:
-      1: 0
-  15:
-    cc_values:
-      1: 0
   13:
     cc_values:
       8: 0

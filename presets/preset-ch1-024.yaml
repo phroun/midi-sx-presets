@@ -53,9 +53,6 @@ loop_b_pan: 63
 loop_b_to_dsp: 0
 poly_morph: 63
 channels:
-  14:
-    cc_values:
-      0: 0
   13:
     cc_values:
       8: 0

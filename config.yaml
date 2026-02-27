@@ -31,6 +31,8 @@ manufacturer_id: 0x7D
 # Use --list-ports to see available MIDI port names.
 #
 
+seq_delay: 0.05
+
 routing:
   inputs:
     - device: "UMC404HD 192k"
