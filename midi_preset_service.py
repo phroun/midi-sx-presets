@@ -23,9 +23,11 @@ Protocol (SysEx, mfr 0x7D by default):
 
 Usage:
   python midi_preset_service.py [--config-dir DIR] [--list-ports]
+                                [--no-input] [--no-iac-input]
 """
 
 import argparse
+import queue
 import signal
 import sys
 import threading
@@ -99,7 +101,7 @@ class MidiPresetService:
     """Core service: listens on a virtual MIDI port for SysEx commands and
     records / recalls CC + PC presets stored as YAML."""
 
-    def __init__(self, config_dir=None):
+    def __init__(self, config_dir=None, no_input=False, no_iac_input=False):
         self.config_dir = Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -152,10 +154,15 @@ class MidiPresetService:
         self._state_stop = threading.Event()
         self._load_state()
 
+        # Input control flags (proxy mode only)
+        self.no_input = no_input          # --no-input: skip routing.inputs
+        self.no_iac_input = no_iac_input  # --no-iac-input: skip routing.iac_input
+
         # MIDI ports (opened in run())
         self.midi_in = None
         self.midi_out = None
         self.midi_return = None  # Recall output (= midi_out in standalone mode)
+        self.extra_inputs = []   # Additional input ports from routing.inputs
 
     # -- Config / persistence -------------------------------------------------
 
@@ -2008,6 +2015,34 @@ class MidiPresetService:
         if self.routing and self.midi_out:
             self.midi_out.send(msg)
 
+    # -- Extra input helpers ---------------------------------------------------
+
+    def _open_extra_input(self, inp_cfg, msg_queue):
+        """Open one extra input device with channel filtering into *msg_queue*."""
+        device = inp_cfg.get("device", "")
+        if not device:
+            _log("WARN", "Input entry missing 'device' — skipped")
+            return
+        channels = inp_cfg.get("channels", [])
+        # channels are 1-based in config; convert to 0-based set (empty = all)
+        ch_set = {c - 1 for c in channels} if channels else None
+
+        def make_cb(ch_filter):
+            def cb(msg):
+                if (ch_filter is None
+                        or not hasattr(msg, "channel")
+                        or msg.channel in ch_filter):
+                    msg_queue.put(msg)
+            return cb
+
+        try:
+            port = mido.open_input(device, callback=make_cb(ch_set))
+            self.extra_inputs.append(port)
+            ch_str = ", ".join(str(c) for c in channels) if channels else "all"
+            _log("OPEN", f"Input device : {device} (ch {ch_str})")
+        except OSError as exc:
+            _log("WARN", f"Could not open input '{device}': {exc}")
+
     # -- Run loop -------------------------------------------------------------
 
     def run(self):
@@ -2019,9 +2054,18 @@ class MidiPresetService:
         _log("INIT", f"Config dir   : {self.config_dir}")
         if self.routing:
             _log("INIT", f"Mode         : proxy")
-            _log("INIT", f"IAC input    : {self.routing['iac_input']}")
+            iac_status = "(disabled)" if self.no_iac_input else self.routing['iac_input']
+            _log("INIT", f"IAC input    : {iac_status}")
             _log("INIT", f"IAC return   : {self.routing['iac_return']}")
             _log("INIT", f"Hardware out : {self.routing['hardware_output']}")
+            extra_cfgs = self.routing.get("inputs", [])
+            if extra_cfgs and not self.no_input:
+                for inp in extra_cfgs:
+                    ch_list = inp.get("channels", [])
+                    ch_str = ", ".join(str(c) for c in ch_list) if ch_list else "all"
+                    _log("INIT", f"Input        : {inp.get('device', '?')} (ch {ch_str})")
+            elif self.no_input and extra_cfgs:
+                _log("INIT", f"Inputs       : {len(extra_cfgs)} configured (disabled)")
         else:
             _log("INIT", f"Mode         : standalone")
             _log("INIT", f"Virtual port : {port_name}")
@@ -2110,19 +2154,45 @@ class MidiPresetService:
 
         try:
             if self.routing:
-                self.midi_in = mido.open_input(self.routing["iac_input"])
+                # -- Proxy mode: queue-based multi-input ----------------------
+                msg_queue = queue.Queue()
+
+                # IAC input (primary)
+                if not self.no_iac_input:
+                    self.midi_in = mido.open_input(
+                        self.routing["iac_input"], callback=msg_queue.put)
+
                 self.midi_out = mido.open_output(self.routing["hardware_output"])
                 self.midi_return = mido.open_output(self.routing["iac_return"])
+
+                # Extra input devices (channel-filtered)
+                if not self.no_input:
+                    for inp_cfg in self.routing.get("inputs", []):
+                        self._open_extra_input(inp_cfg, msg_queue)
+
+                if not self.midi_in and not self.extra_inputs:
+                    _log("WARN", "All inputs disabled — no MIDI source")
+
+                # Send saved/default state to hardware so it matches immediately
+                self._boot_sync()
+
+                # Unified message loop — all inputs feed the queue
+                while True:
+                    try:
+                        msg = msg_queue.get(timeout=0.5)
+                    except queue.Empty:
+                        continue
+                    self._handle_message(msg)
             else:
+                # -- Standalone mode ------------------------------------------
                 self.midi_in = mido.open_input(port_name, virtual=True)
                 self.midi_out = mido.open_output(port_name, virtual=True)
                 self.midi_return = self.midi_out
 
-            # Send saved/default state to hardware so it matches immediately
-            self._boot_sync()
+                self._boot_sync()
 
-            for msg in self.midi_in:
-                self._handle_message(msg)
+                for msg in self.midi_in:
+                    self._handle_message(msg)
 
         except KeyboardInterrupt:
             print("\nShutting down.")
@@ -2144,6 +2214,9 @@ class MidiPresetService:
                 _log("STATE", "State saved.")
             except Exception as exc:
                 _log("WARN", f"Final state save failed: {exc}")
+            for port in self.extra_inputs:
+                port.close()
+            self.extra_inputs.clear()
             if self.midi_in:
                 self.midi_in.close()
             if self.midi_out:
@@ -2186,6 +2259,16 @@ def main():
         action="store_true",
         help="List available MIDI ports and exit.",
     )
+    parser.add_argument(
+        "--no-input",
+        action="store_true",
+        help="Disable extra input devices (routing.inputs).",
+    )
+    parser.add_argument(
+        "--no-iac-input",
+        action="store_true",
+        help="Disable IAC input (routing.iac_input).",
+    )
     args = parser.parse_args()
 
     if args.list_ports:
@@ -2194,7 +2277,9 @@ def main():
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
-    service = MidiPresetService(config_dir=args.config_dir)
+    service = MidiPresetService(config_dir=args.config_dir,
+                                no_input=args.no_input,
+                                no_iac_input=args.no_iac_input)
     service.run()
 
 
