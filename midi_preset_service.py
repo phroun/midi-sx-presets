@@ -2365,7 +2365,13 @@ class MidiPresetService:
                             "unlock_t": 0.0}
                     elif (msg.type == "note_off"
                           or (msg.type == "note_on" and msg.velocity == 0)):
-                        active.get(ch, {}).pop(msg.note, None)
+                        info = active.get(ch, {}).pop(msg.note, None)
+                        if info is not None and info["unlocked"]:
+                            # Reset aftertouch on the synth so the CV
+                            # doesn't stay stuck at the last decay value
+                            msg_queue.put(mido.Message(
+                                "polytouch", channel=ch,
+                                note=msg.note, value=0))
                     elif (msg.type == "aftertouch"
                           and ch in p2p_channels):
                         # Convert channel pressure to per-note polytouch.
