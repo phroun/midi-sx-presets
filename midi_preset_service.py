@@ -2399,13 +2399,13 @@ class MidiPresetService:
 
         def make_cb(ch_filter, channel_opts, has_p2p, source):
             # Per-device note tracker:
-            #   active[ch][note] = {"vel": int, "unlocked": bool,
-            #                       "unlock_t": float}
+            #   active[ch][note] = {"vel", "unlocked", "unlock_t",
+            #                       "last_out", "last_out_t"}
             # "unlocked" becomes True once channel pressure reaches or
             # exceeds the note's original velocity; after that, the
             # aftertouch value tracks pressure directly and is allowed
             # to drop below the original velocity (subject to the
-            # optional decay floor).
+            # optional decay floor and slew rate limiter).
             active = {} if has_p2p else None
 
             def _put(m):
@@ -2430,7 +2430,9 @@ class MidiPresetService:
                     if msg.type == "note_on" and msg.velocity > 0:
                         active.setdefault(ch, {})[msg.note] = {
                             "vel": msg.velocity, "unlocked": False,
-                            "unlock_t": 0.0}
+                            "unlock_t": 0.0,
+                            "last_out": float(msg.velocity),
+                            "last_out_t": 0.0}
                     elif (msg.type == "note_off"
                           or (msg.type == "note_on" and msg.velocity == 0)):
                         info = active.get(ch, {}).pop(msg.note, None)
@@ -2458,10 +2460,13 @@ class MidiPresetService:
                         # unlocking, the player can lighten pressure
                         # below the original velocity — the CV follows.
                         #
-                        # Decay floor: when pressure_decay is set, a
-                        # floor that starts at velocity and linearly
-                        # decays to 0 prevents the CV from dropping
-                        # faster than the configured rate.
+                        # Decay floor + slew limiter: when pressure_decay
+                        # is set, a floor decays from velocity toward 0
+                        # over that duration, and the output is also
+                        # slew-rate-limited so that it never changes
+                        # faster than 127/decay_s units per second in
+                        # either direction.  This eliminates jitter from
+                        # noisy pressure sensors.
                         decay_s = copts.get("decay_s", 0)
                         notes = active.get(ch, {})
                         if notes:
@@ -2473,21 +2478,38 @@ class MidiPresetService:
                                     if not info["unlocked"]:
                                         info["unlocked"] = True
                                         info["unlock_t"] = now
+                                        info["last_out"] = float(vel)
+                                        info["last_out_t"] = now
                                 if info["unlocked"]:
-                                    value = pressure
+                                    target = float(pressure)
                                     if decay_s > 0:
-                                        elapsed = now - info["unlock_t"]
-                                        if elapsed < decay_s:
+                                        # Decay floor
+                                        elapsed_u = (now
+                                                     - info["unlock_t"])
+                                        if elapsed_u < decay_s:
                                             floor = vel * (
-                                                1.0 - elapsed / decay_s)
-                                            value = max(
-                                                pressure,
-                                                int(round(floor)))
+                                                1.0 - elapsed_u
+                                                / decay_s)
+                                            target = max(target, floor)
+                                        # Slew rate limiter
+                                        elapsed_o = (now
+                                                     - info["last_out_t"])
+                                        max_delta = (127.0 * elapsed_o
+                                                     / decay_s)
+                                        prev = info["last_out"]
+                                        if target > prev:
+                                            target = min(target,
+                                                         prev + max_delta)
+                                        else:
+                                            target = max(target,
+                                                         prev - max_delta)
+                                    value = max(0, min(127,
+                                                       int(round(target))))
+                                    info["last_out"] = float(value)
+                                    info["last_out_t"] = now
                                     _put(mido.Message(
                                         "polytouch", channel=ch,
-                                        note=note,
-                                        value=max(0, min(127,
-                                                         value))))
+                                        note=note, value=value))
                                 # else: locked — velocity CV untouched
                         return  # suppress original channel aftertouch
                 _put(msg)
