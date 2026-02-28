@@ -730,6 +730,14 @@ class MidiPresetService:
                 nm["max_polyphony"] = 1
                 if isinstance(mono, str) and "polyphony_instance" not in nm:
                     nm["polyphony_instance"] = mono
+            # polyphonic_distribution: round-robin voice slots across channels
+            dist = nm.get("polyphonic_distribution")
+            if dist is not None:
+                # Convert 1-based YAML channels to 0-based
+                nm["_dist_slots"] = [int(ch) - 1 for ch in dist]
+                # Implicitly set max_polyphony from slot count
+                if "max_polyphony" not in nm:
+                    nm["max_polyphony"] = len(nm["_dist_slots"])
 
         # Resolve named polyphony instances
         self.poly_instances = self._resolve_poly_instances()
@@ -1622,11 +1630,13 @@ class MidiPresetService:
     def _get_poly_state(self, key):
         """Get or create polyphony state for a pool (instance name or channel)."""
         if key not in self.poly_states:
-            self.poly_states[key] = {"held": [], "active": []}
+            self.poly_states[key] = {"held": [], "active": [],
+                                     "dist_rr": 0}
         return self.poly_states[key]
 
     def _poly_note_on(self, state, pitch, velocity, max_poly,
-                      replace_priority, transpose, out_ch):
+                      replace_priority, transpose, out_ch,
+                      dist_slots=None):
         """Process note-on through polyphony limiter.
 
         Tracks notes by their original (pre-transpose) pitch, along with
@@ -1635,45 +1645,83 @@ class MidiPresetService:
           ("on", pitch, velocity, reason, transpose, out_ch)
           ("off", pitch, reason, transpose, out_ch)
         where reason is one of: "new", "retrigger", "replace", "steal".
+
+        When *dist_slots* is provided (a list of 0-based MIDI channels),
+        each new voice is assigned to the next available slot in round-robin
+        order.  The slot's channel overrides *out_ch*.
         """
         now = time.monotonic()
-        note_info = {"pitch": pitch, "velocity": velocity, "timestamp": now,
-                     "transpose": transpose, "out_ch": out_ch}
 
-        # Update held-notes list
+        if dist_slots:
+            slot_ch = self._dist_alloc(state, dist_slots)
+        else:
+            slot_ch = out_ch
+
+        note_info = {"pitch": pitch, "velocity": velocity, "timestamp": now,
+                     "transpose": transpose, "out_ch": slot_ch}
+
+        # Update held-notes list (store requested slot_ch for fallback reuse)
         state["held"] = [n for n in state["held"] if n["pitch"] != pitch]
         state["held"].append(note_info)
 
         results = []
 
-        # Already active → retrigger (update timestamp/velocity, re-send)
-        if any(n["pitch"] == pitch for n in state["active"]):
+        # Already active → retrigger on the SAME channel it's already on
+        existing = next(
+            (n for n in state["active"] if n["pitch"] == pitch), None)
+        if existing is not None:
+            reuse_ch = existing["out_ch"]
+            note_info["out_ch"] = reuse_ch
             state["active"] = [n for n in state["active"]
                                if n["pitch"] != pitch]
             state["active"].append(note_info)
             results.append(("on", pitch, velocity, "retrigger",
-                            transpose, out_ch))
+                            transpose, reuse_ch))
             return results
 
         # Room available → just add
         if len(state["active"]) < max_poly:
             state["active"].append(note_info)
             results.append(("on", pitch, velocity, "new",
-                            transpose, out_ch))
+                            transpose, slot_ch))
             return results
 
-        # Polyphony full → steal a voice (use stolen note's stored values)
+        # Polyphony full → steal a voice (reuse stolen voice's channel slot)
         to_replace = self._select_replace(state["active"], replace_priority)
         if to_replace is not None:
             results.append(("off", to_replace["pitch"], "steal",
                             to_replace["transpose"], to_replace["out_ch"]))
+            if dist_slots:
+                # Reuse the freed channel slot instead of round-robin
+                note_info["out_ch"] = to_replace["out_ch"]
             state["active"] = [n for n in state["active"]
                                if n["pitch"] != to_replace["pitch"]]
             state["active"].append(note_info)
             results.append(("on", pitch, velocity, "replace",
-                            transpose, out_ch))
+                            transpose, note_info["out_ch"]))
 
         return results
+
+    def _dist_alloc(self, state, slots):
+        """Pick the next distribution slot using round-robin.
+
+        Prefers free slots (channels not currently in use by an active note).
+        Falls back to pure round-robin when all slots are occupied.
+        """
+        active_channels = [n["out_ch"] for n in state["active"]]
+        n = len(slots)
+        start = state["dist_rr"] % n
+        # First pass: find the next free slot from the round-robin cursor
+        for i in range(n):
+            idx = (start + i) % n
+            ch = slots[idx]
+            if ch not in active_channels:
+                state["dist_rr"] = idx + 1
+                return ch
+        # All occupied — pure round-robin (voice stealing will free one)
+        ch = slots[start]
+        state["dist_rr"] = start + 1
+        return ch
 
     def _poly_note_off(self, state, pitch, fallback_priority,
                        transpose, out_ch):
@@ -1702,14 +1750,16 @@ class MidiPresetService:
                            if n["pitch"] != pitch]
 
         # Try to activate a held-but-inactive note as fallback
+        # Fallback inherits the freed channel slot (for distribution)
         fallback = self._select_fallback(
             state["held"], state["active"], fallback_priority)
         if fallback is not None:
+            fallback["out_ch"] = rel_out_ch
             state["active"].append(fallback)
             results.append(("on", fallback["pitch"],
                             fallback["velocity"], "fallback",
                             fallback.get("transpose", transpose),
-                            fallback.get("out_ch", out_ch)))
+                            rel_out_ch))
 
         return results
 
@@ -1868,7 +1918,9 @@ class MidiPresetService:
             name = nm.get("name", "")
 
             inst_name = nm.get("polyphony_instance")
-            has_poly = "max_polyphony" in nm or inst_name is not None
+            dist_slots = nm.get("_dist_slots")
+            has_poly = ("max_polyphony" in nm or inst_name is not None
+                        or dist_slots is not None)
 
             if has_poly:
                 # ---- Polyphony-managed note processing ----
@@ -1879,6 +1931,13 @@ class MidiPresetService:
                     max_poly = params.get("max_polyphony", 1)
                     replace_pri = params.get("replace_priority", "lowest")
                     fallback_pri = params.get(
+                        "fallback_priority", "most_recent")
+                elif dist_slots is not None:
+                    # Distribution without instance name — key by slot list
+                    pool_key = ("_dist", tuple(dist_slots))
+                    max_poly = nm["max_polyphony"]
+                    replace_pri = nm.get("replace_priority", "lowest")
+                    fallback_pri = nm.get(
                         "fallback_priority", "most_recent")
                 else:
                     # Legacy: no instance name, key by output channel
@@ -1893,7 +1952,7 @@ class MidiPresetService:
                 if is_note_on:
                     actions = self._poly_note_on(
                         state, note, msg.velocity, max_poly, replace_pri,
-                        transpose, out_ch)
+                        transpose, out_ch, dist_slots=dist_slots)
                     # Track origin for later note-off routing
                     origins.append({
                         "has_poly": True,
@@ -2164,12 +2223,39 @@ class MidiPresetService:
             self._process_cc_mapping(msg)
             return  # CCs never forwarded raw — only mapped outputs are sent
 
+        # Polyphonic aftertouch — follow the note's routed channel
+        if msg.type == "polytouch":
+            origins = self.note_on_origins.get((msg.channel, msg.note))
+            if origins:
+                for info in origins:
+                    if info["has_poly"]:
+                        # Find the note's current output channel from active
+                        state = self._get_poly_state(info["pool_key"])
+                        active = next(
+                            (n for n in state["active"]
+                             if n["pitch"] == msg.note), None)
+                        if active:
+                            out_note = msg.note + active["transpose"]
+                            if 0 <= out_note <= 127:
+                                self._forward(msg.copy(
+                                    note=out_note,
+                                    channel=active["out_ch"]))
+                    else:
+                        out_note = msg.note + info["transpose"]
+                        if 0 <= out_note <= 127:
+                            self._forward(msg.copy(
+                                note=out_note,
+                                channel=info["out_ch"]))
+                return
+            self._forward(msg)
+            return
+
         # Program Change — forward to hardware
         if msg.type == "program_change":
             self._forward(msg)
             return
 
-        # All other events (notes, pitch bend, etc.) — forward unchanged
+        # All other events (pitch bend, channel aftertouch, etc.) — forward unchanged
         self._forward(msg)
 
     def _forward(self, msg):
