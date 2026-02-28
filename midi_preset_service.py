@@ -2265,6 +2265,30 @@ class MidiPresetService:
 
     # -- Extra input helpers ---------------------------------------------------
 
+    @staticmethod
+    def _build_velocity_table(floor_vel, low_in, high_in, curve_exp):
+        """Build a 128-entry velocity lookup table.
+
+        - Index 0 stays 0 (velocity 0 = note-off semantics).
+        - [1, low_in)  → floor_vel  (clamp quiet playing to the floor).
+        - [low_in, high_in] → [floor_vel, high_in] via power curve.
+        - (high_in, 127] → linear from high_in to 127.
+        """
+        table = [0] * 128
+        for v in range(1, 128):
+            if v <= low_in:
+                table[v] = floor_vel
+            elif v <= high_in:
+                t = (v - low_in) / (high_in - low_in)
+                out = floor_vel + (high_in - floor_vel) * (t ** curve_exp)
+                table[v] = max(floor_vel, min(127, int(round(out))))
+            else:
+                # Linear from high_in to 127
+                t = (v - high_in) / (127 - high_in) if high_in < 127 else 0
+                out = high_in + (127 - high_in) * t
+                table[v] = max(high_in, min(127, int(round(out))))
+        return table
+
     def _open_extra_input(self, inp_cfg, msg_queue):
         """Open one extra input device with channel filtering into *msg_queue*."""
         device = inp_cfg.get("device", "")
@@ -2275,19 +2299,39 @@ class MidiPresetService:
         # channels are 1-based in config; convert to 0-based set (empty = all)
         ch_set = {c - 1 for c in channels} if channels else None
 
-        def make_cb(ch_filter):
+        # Optional velocity curve table
+        vc = inp_cfg.get("velocity_curve")
+        vel_table = None
+        if vc:
+            vel_table = self._build_velocity_table(
+                int(vc.get("floor", 1)),
+                int(vc.get("low", 1)),
+                int(vc.get("high", 127)),
+                float(vc.get("curve", 1.0)))
+
+        def make_cb(ch_filter, vtable):
             def cb(msg):
-                if (ch_filter is None
-                        or not hasattr(msg, "channel")
-                        or msg.channel in ch_filter):
-                    msg_queue.put(msg)
+                if (ch_filter is not None
+                        and hasattr(msg, "channel")
+                        and msg.channel not in ch_filter):
+                    return
+                if vtable is not None and hasattr(msg, "velocity"):
+                    msg = msg.copy(velocity=vtable[msg.velocity])
+                msg_queue.put(msg)
             return cb
 
         try:
-            port = mido.open_input(device, callback=make_cb(ch_set))
+            port = mido.open_input(device, callback=make_cb(ch_set, vel_table))
             self.extra_inputs.append(port)
             ch_str = ", ".join(str(c) for c in channels) if channels else "all"
-            _log("OPEN", f"Input device : {device} (ch {ch_str})")
+            vel_str = ""
+            if vc:
+                vel_str = (f" vel_curve("
+                           f"floor={vc.get('floor', 1)} "
+                           f"low={vc.get('low', 1)} "
+                           f"high={vc.get('high', 127)} "
+                           f"curve={vc.get('curve', 1.0)})")
+            _log("OPEN", f"Input device : {device} (ch {ch_str}){vel_str}")
         except OSError as exc:
             _log("WARN", f"Could not open input '{device}': {exc}")
 
