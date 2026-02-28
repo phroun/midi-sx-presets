@@ -2342,15 +2342,21 @@ class MidiPresetService:
                         active.get(ch, {}).pop(msg.note, None)
                     elif (msg.type == "aftertouch"
                           and ch in p2p_channels):
-                        # Convert to weighted polytouch per active note
+                        # Convert channel pressure to per-note polytouch.
+                        # On the receiving synth aftertouch overwrites
+                        # the velocity CV, so the polytouch value IS the
+                        # new velocity: original velocity pushed upward
+                        # toward 127 by the pressure amount, keeping
+                        # each note's value proportional to how hard
+                        # it was originally struck.
                         notes = active.get(ch, {})
                         if notes:
                             pressure = msg.value
                             for note, vel in notes.items():
-                                scaled = int(round(pressure * vel / 127))
+                                boosted = vel + (127 - vel) * pressure / 127
                                 msg_queue.put(mido.Message(
                                     "polytouch", channel=ch, note=note,
-                                    value=max(0, min(127, scaled))))
+                                    value=min(127, int(round(boosted)))))
                         return  # suppress original channel aftertouch
                 msg_queue.put(msg)
             return cb
