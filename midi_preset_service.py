@@ -2330,13 +2330,22 @@ class MidiPresetService:
         elif p2p:
             press_channels = {int(c) - 1 for c in p2p}
 
-        def make_cb(ch_filter, vtable, p2p_channels):
+        # Optional pressure decay time (ms).  After a note unlocks, a
+        # decay floor starts at the note's velocity and linearly ramps
+        # down to 0 over this duration, preventing sudden CV drops when
+        # the player lightens pressure quickly after crossing the
+        # threshold.  0 or absent = no decay (raw pressure tracking).
+        p2p_decay_s = float(inp_cfg.get("pressure_decay", 0)) / 1000.0
+
+        def make_cb(ch_filter, vtable, p2p_channels, decay_s):
             # Per-device note tracker:
-            #   active[ch][note] = {"vel": int, "unlocked": bool}
+            #   active[ch][note] = {"vel": int, "unlocked": bool,
+            #                       "unlock_t": float}
             # "unlocked" becomes True once channel pressure reaches or
             # exceeds the note's original velocity; after that, the
             # aftertouch value tracks pressure directly and is allowed
-            # to drop below the original velocity.
+            # to drop below the original velocity (subject to the
+            # optional decay floor).
             active = {} if p2p_channels is not None else None
 
             def cb(msg):
@@ -2352,7 +2361,8 @@ class MidiPresetService:
                     ch = msg.channel
                     if msg.type == "note_on" and msg.velocity > 0:
                         active.setdefault(ch, {})[msg.note] = {
-                            "vel": msg.velocity, "unlocked": False}
+                            "vel": msg.velocity, "unlocked": False,
+                            "unlock_t": 0.0}
                     elif (msg.type == "note_off"
                           or (msg.type == "note_on" and msg.velocity == 0)):
                         active.get(ch, {}).pop(msg.note, None)
@@ -2373,19 +2383,36 @@ class MidiPresetService:
                         # pressure == velocity at that instant).  After
                         # unlocking, the player can lighten pressure
                         # below the original velocity — the CV follows.
+                        #
+                        # Decay floor: when pressure_decay is set, a
+                        # floor that starts at velocity and linearly
+                        # decays to 0 prevents the CV from dropping
+                        # faster than the configured rate.
                         notes = active.get(ch, {})
                         if notes:
                             pressure = msg.value
+                            now = time.monotonic()
                             for note, info in notes.items():
                                 vel = info["vel"]
                                 if pressure >= vel:
-                                    info["unlocked"] = True
+                                    if not info["unlocked"]:
+                                        info["unlocked"] = True
+                                        info["unlock_t"] = now
                                 if info["unlocked"]:
+                                    value = pressure
+                                    if decay_s > 0:
+                                        elapsed = now - info["unlock_t"]
+                                        if elapsed < decay_s:
+                                            floor = vel * (
+                                                1.0 - elapsed / decay_s)
+                                            value = max(
+                                                pressure,
+                                                int(round(floor)))
                                     msg_queue.put(mido.Message(
                                         "polytouch", channel=ch,
                                         note=note,
-                                        value=max(0, min(
-                                            127, pressure))))
+                                        value=max(0, min(127,
+                                                         value))))
                                 # else: locked — velocity CV untouched
                         return  # suppress original channel aftertouch
                 msg_queue.put(msg)
@@ -2394,7 +2421,8 @@ class MidiPresetService:
         try:
             port = mido.open_input(
                 device,
-                callback=make_cb(ch_set, vel_table, press_channels))
+                callback=make_cb(ch_set, vel_table, press_channels,
+                                p2p_decay_s))
             self.extra_inputs.append(port)
             ch_str = ", ".join(str(c) for c in channels) if channels else "all"
             extras = []
@@ -2405,11 +2433,14 @@ class MidiPresetService:
                     f"high={vc.get('high', 127)} "
                     f"curve={vc.get('curve', 1.0)})")
             if press_channels is not None:
+                decay_ms = int(p2p_decay_s * 1000)
+                decay_tag = f" decay={decay_ms}ms" if decay_ms else ""
                 if p2p is True:
-                    extras.append("pressure_to_poly(all)")
+                    extras.append(f"pressure_to_poly(all{decay_tag})")
                 else:
                     p2p_str = ",".join(str(c) for c in sorted(p2p))
-                    extras.append(f"pressure_to_poly(ch {p2p_str})")
+                    extras.append(
+                        f"pressure_to_poly(ch {p2p_str}{decay_tag})")
             suffix = f" {' '.join(extras)}" if extras else ""
             _log("OPEN", f"Input device : {device} (ch {ch_str}){suffix}")
         except OSError as exc:
