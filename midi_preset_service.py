@@ -167,6 +167,9 @@ class MidiPresetService:
         self.no_input = no_input          # --no-input: skip routing.inputs
         self.no_iac_input = no_iac_input  # --no-iac-input: skip routing.iac_input
 
+        # Source device tag for debug logging (set per message in run loop)
+        self._msg_source = ""
+
         # MIDI ports (opened in run())
         self.midi_in = None
         self.midi_out = None
@@ -1816,9 +1819,11 @@ class MidiPresetService:
                     results.append(mido.Message(
                         "note_on", note=out_note, channel=a_out_ch,
                         velocity=action[2]))
+                    src = getattr(self, "_msg_source", "")
                     _log("NOTE", f"poly {action[3]} "
                          f"note={action[1]}→{out_note} "
-                         f"ch{a_out_ch + 1} vel={action[2]} "
+                         f"ch{a_out_ch + 1} [{src}] "
+                         f"vel={action[2]} "
                          f"\"{name}\" "
                          f"[{pool_label} "
                          f"{len(state['active'])}/{max_poly}]")
@@ -1831,9 +1836,11 @@ class MidiPresetService:
                     results.append(mido.Message(
                         "note_off", note=out_note, channel=a_out_ch,
                         velocity=0))
+                    src = getattr(self, "_msg_source", "")
                     _log("NOTE", f"poly {action[2]} "
                          f"note={action[1]}→{out_note} "
-                         f"ch{a_out_ch + 1} \"{name}\" "
+                         f"ch{a_out_ch + 1} [{src}] "
+                         f"\"{name}\" "
                          f"[{pool_label} "
                          f"{len(state['active'])}/{max_poly}]")
         return results
@@ -1864,9 +1871,10 @@ class MidiPresetService:
                     results.append(mido.Message(
                         "note_off", note=out_note,
                         channel=info["out_ch"], velocity=0))
+                    src = getattr(self, "_msg_source", "")
                     _log("NOTE", f"tracked release "
                          f"note={pitch}→{out_note} "
-                         f"ch{info['out_ch'] + 1} "
+                         f"ch{info['out_ch'] + 1} [{src}] "
                          f"\"{info['name']}\"")
         return results
 
@@ -1978,7 +1986,9 @@ class MidiPresetService:
                 # ---- Simple pass-through with optional transpose/channel ----
                 out_note = note + transpose
                 if out_note < 0 or out_note > 127:
+                    src = getattr(self, "_msg_source", "")
                     _log("NOTE", f"note {note} ch{src_ch_1based} "
+                         f"[{src}] "
                          f"transpose {transpose:+d} → {out_note} "
                          f"out of range, skipped \"{name}\"")
                     continue
@@ -1996,6 +2006,7 @@ class MidiPresetService:
                     })
 
                 # Debug logging
+                src = getattr(self, "_msg_source", "")
                 changes = []
                 if out_note != note:
                     changes.append(f"note {note}→{out_note}")
@@ -2003,6 +2014,7 @@ class MidiPresetService:
                     changes.append(f"ch{src_ch_1based}→{out_ch + 1}")
                 detail = ", ".join(changes) if changes else "no change"
                 line = (f"{msg.type} note={note} ch{src_ch_1based} "
+                        f"[{src}] "
                         f"(shift=0x{self.shift_state:04X}) → "
                         f"{detail} \"{name}\"")
                 _log("NOTE", line)
@@ -2385,7 +2397,7 @@ class MidiPresetService:
         # Quick lookups for the callback
         any_p2p = any(o["p2p"] for o in ch_opts.values())
 
-        def make_cb(ch_filter, channel_opts, has_p2p):
+        def make_cb(ch_filter, channel_opts, has_p2p, source):
             # Per-device note tracker:
             #   active[ch][note] = {"vel": int, "unlocked": bool,
             #                       "unlock_t": float}
@@ -2395,6 +2407,9 @@ class MidiPresetService:
             # to drop below the original velocity (subject to the
             # optional decay floor).
             active = {} if has_p2p else None
+
+            def _put(m):
+                msg_queue.put((source, m))
 
             def cb(msg):
                 if (ch_filter is not None
@@ -2422,7 +2437,7 @@ class MidiPresetService:
                         if info is not None and info["unlocked"]:
                             # Reset aftertouch on the synth so the CV
                             # doesn't stay stuck at the last decay value
-                            msg_queue.put(mido.Message(
+                            _put(mido.Message(
                                 "polytouch", channel=ch,
                                 note=msg.note, value=0))
                     elif (msg.type == "aftertouch"
@@ -2468,20 +2483,20 @@ class MidiPresetService:
                                             value = max(
                                                 pressure,
                                                 int(round(floor)))
-                                    msg_queue.put(mido.Message(
+                                    _put(mido.Message(
                                         "polytouch", channel=ch,
                                         note=note,
                                         value=max(0, min(127,
                                                          value))))
                                 # else: locked — velocity CV untouched
                         return  # suppress original channel aftertouch
-                msg_queue.put(msg)
+                _put(msg)
             return cb
 
         try:
             port = mido.open_input(
                 device,
-                callback=make_cb(ch_set, ch_opts, any_p2p))
+                callback=make_cb(ch_set, ch_opts, any_p2p, device))
             self.extra_inputs.append(port)
             ch_str = ", ".join(str(c) for c in channels) if channels else "all"
             extras = []
@@ -2662,9 +2677,12 @@ class MidiPresetService:
                 msg_queue = queue.Queue()
 
                 # IAC input (primary)
+                iac_name = self.routing["iac_input"]
                 if not self.no_iac_input:
                     self.midi_in = mido.open_input(
-                        self.routing["iac_input"], callback=msg_queue.put)
+                        iac_name,
+                        callback=lambda m, s=iac_name: msg_queue.put(
+                            (s, m)))
 
                 self.midi_out = mido.open_output(self.routing["hardware_output"])
                 self.midi_return = mido.open_output(self.routing["iac_return"])
@@ -2681,17 +2699,20 @@ class MidiPresetService:
                 self._boot_sync()
 
                 # Unified message loop — all inputs feed the queue
+                # Each item is a (source_device_name, msg) tuple.
                 while True:
                     try:
-                        msg = msg_queue.get(timeout=0.5)
+                        source, msg = msg_queue.get(timeout=0.5)
                     except queue.Empty:
                         continue
+                    self._msg_source = source
                     self._handle_message(msg)
             else:
                 # -- Standalone mode ------------------------------------------
                 self.midi_in = mido.open_input(port_name, virtual=True)
                 self.midi_out = mido.open_output(port_name, virtual=True)
                 self.midi_return = self.midi_out
+                self._msg_source = port_name
 
                 self._boot_sync()
 
