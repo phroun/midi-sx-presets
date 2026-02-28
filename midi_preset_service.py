@@ -2331,16 +2331,20 @@ class MidiPresetService:
         """Build per-channel option dicts from device-level + per_channel overrides.
 
         Returns a dict keyed by 0-based channel number.  Each value is a dict
-        with keys ``vtable``, ``p2p`` (bool), ``decay_s`` (float),
-        ``sustain_pct`` (float, 0–100), ``slew_up`` (float, steps/sec),
-        ``slew_down`` (float, steps/sec), ``debounce_s`` (float).
-        Channels without any options are omitted.
+        with keys ``vtable``, ``ptable``, ``p2p`` (bool),
+        ``decay_s`` (float), ``sustain_pct`` (float, 0–100),
+        ``slew_up`` (float, steps/sec), ``slew_down`` (float,
+        steps/sec), ``debounce_s`` (float).  ``ptable`` is an
+        optional 128-entry lookup table for pressure values (same
+        format as ``vtable``).  Channels without any options are
+        omitted.
 
-        Device-level ``velocity_curve``, ``pressure_to_poly``,
-        ``pressure_decay``, ``pressure_sustain``, ``slew_up``,
-        ``slew_down`` and ``note_debounce`` act as defaults;
-        ``per_channel`` entries (keyed by 1-based channel number in
-        the YAML) override them.
+        Device-level ``velocity_curve``, ``pressure_curve``,
+        ``pressure_to_poly``, ``pressure_decay``,
+        ``pressure_sustain``, ``slew_up``, ``slew_down`` and
+        ``note_debounce`` act as defaults; ``per_channel`` entries
+        (keyed by 1-based channel number in the YAML) override
+        them.
         """
         build_vt = MidiPresetService._build_velocity_table
 
@@ -2356,6 +2360,8 @@ class MidiPresetService:
         # --- device-level defaults ---
         default_vc = inp_cfg.get("velocity_curve")
         default_vtable = _parse_vc(default_vc)
+        default_pc = inp_cfg.get("pressure_curve")
+        default_ptable = _parse_vc(default_pc)
 
         p2p_raw = inp_cfg.get("pressure_to_poly")
         if p2p_raw is True:
@@ -2397,6 +2403,12 @@ class MidiPresetService:
             else:
                 vtable = default_vtable
 
+            # Pressure curve: per-channel override wins
+            if "pressure_curve" in override:
+                ptable = _parse_vc(override["pressure_curve"])
+            else:
+                ptable = default_ptable
+
             # Pressure-to-poly
             p2p_over = override.get("pressure_to_poly")
             if p2p_over is not None:
@@ -2432,7 +2444,8 @@ class MidiPresetService:
             else:
                 debounce_s = default_debounce_s
 
-            opts[ch0] = {"vtable": vtable, "p2p": p2p,
+            opts[ch0] = {"vtable": vtable, "ptable": ptable,
+                         "p2p": p2p,
                          "decay_s": decay_s,
                          "sustain_pct": sustain_pct,
                          "slew_up": slew_up,
@@ -2608,6 +2621,7 @@ class MidiPresetService:
                         sustain_pct = copts.get("sustain_pct", 0)
                         slew_up = copts.get("slew_up", 0)
                         slew_down = copts.get("slew_down", 0)
+                        ptable = copts.get("ptable")
                         # Legacy fallback: if decay is set but neither
                         # slew rate is, use vel/decay_s-scale as
                         # slew_down (smooth downward tracking).
@@ -2629,6 +2643,10 @@ class MidiPresetService:
                         if note_list:
                             now = time.monotonic()
                             for note, info, pressure in note_list:
+                                # Apply pressure curve (if
+                                # configured) before floor/slew.
+                                if ptable is not None:
+                                    pressure = ptable[pressure]
                                 vel = info["vel"]
                                 is_start = False
                                 if not info["started"]:
@@ -2773,9 +2791,16 @@ class MidiPresetService:
                     db_tag = " debounce=per-ch"
                 else:
                     db_tag = ""
+                # Pressure curve summary
+                pc = inp_cfg.get("pressure_curve")
+                pc_tag = ""
+                if pc:
+                    pc_tag = (f" pcurve(fl={pc.get('floor', 1)}"
+                              f" hi={pc.get('high', 127)}"
+                              f" c={pc.get('curve', 1.0)})")
                 extras.append(f"pressure_to_poly({p2p_label}"
                               f"{decay_tag}{sus_tag}"
-                              f"{slew_tag}{db_tag})")
+                              f"{slew_tag}{pc_tag}{db_tag})")
             # Per-channel overrides summary
             if per_ch_yaml:
                 per_parts = []
@@ -2795,6 +2820,10 @@ class MidiPresetService:
                     if "pressure_sustain" in over:
                         tags.append(
                             f"sustain={over['pressure_sustain']}%")
+                    if "pressure_curve" in over:
+                        opc = over["pressure_curve"]
+                        tags.append(
+                            f"pcurve(c={opc.get('curve', 1.0)})")
                     if "slew_up" in over:
                         tags.append(
                             f"slew_up={over['slew_up']}")
