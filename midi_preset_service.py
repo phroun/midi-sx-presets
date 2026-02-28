@@ -2623,8 +2623,6 @@ class MidiPresetService:
                                 copts = channel_opts.get(ch, {})
                                 for note in list(ch_notes):
                                     info = ch_notes[note]
-                                    if not info["started"]:
-                                        continue
                                     _p2p_calc(
                                         ch, note, info,
                                         info["last_pressure"],
@@ -2661,12 +2659,13 @@ class MidiPresetService:
                                     .pop(msg.note, None))
                             if pend is not None:
                                 return
+                            now_on = time.monotonic()
                             active.setdefault(ch, {})[msg.note] = {
                                 "vel": msg.velocity,
-                                "started": False,
-                                "start_t": 0.0,
+                                "started": True,
+                                "start_t": now_on,
                                 "last_out": float(msg.velocity),
-                                "last_out_t": 0.0,
+                                "last_out_t": now_on,
                                 "last_sent": msg.velocity,
                                 "last_pressure": 0}
                             _log("P2P", f"ch{ch+1}/n{msg.note} "
