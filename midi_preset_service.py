@@ -2578,14 +2578,13 @@ class MidiPresetService:
                             _put(mido.Message(
                                 "polytouch", channel=ch,
                                 note=msg.note, value=0))
-                    elif (msg.type == "aftertouch"
+                    elif (msg.type in ("aftertouch", "polytouch")
                           and copts.get("p2p")):
-                        # Convert channel pressure to per-note polytouch.
-                        # On the receiving synth aftertouch overwrites
-                        # the velocity CV, so the polytouch value IS the
-                        # new velocity.
-                        #
-                        # Decay floor + sustain + slew limiter.
+                        # Pressure-to-poly pipeline: applies to both
+                        # channel aftertouch (one pressure for all
+                        # notes) and polyphonic aftertouch (per-note
+                        # pressure).  Either way the output is
+                        # polytouch with decay floor + sustain + slew.
                         #
                         # The floor decays from velocity to a sustain
                         # level (vel * sustain_pct/100) over decay_s.
@@ -2615,11 +2614,21 @@ class MidiPresetService:
                         if (decay_s > 0
                                 and slew_up == 0 and slew_down == 0):
                             slew_down = 127.0 / decay_s
-                        notes = active.get(ch, {})
-                        if notes:
-                            pressure = msg.value
+                        ch_notes = active.get(ch, {})
+                        # Build list of (note, info, pressure) tuples.
+                        # Channel aftertouch → same pressure for all.
+                        # Polyphonic aftertouch → single note only.
+                        if msg.type == "polytouch":
+                            info = ch_notes.get(msg.note)
+                            note_list = ([(msg.note, info, msg.value)]
+                                         if info else [])
+                        else:
+                            note_list = [
+                                (n, inf, msg.value)
+                                for n, inf in ch_notes.items()]
+                        if note_list:
                             now = time.monotonic()
-                            for note, info in notes.items():
+                            for note, info, pressure in note_list:
                                 vel = info["vel"]
                                 is_start = False
                                 if not info["started"]:
@@ -2631,9 +2640,6 @@ class MidiPresetService:
                                 target = float(pressure)
                                 floor_v = 0.0
                                 if decay_s > 0:
-                                    # Floor decays from vel to
-                                    # vel*sustain_pct/100 over
-                                    # decay_s, then holds there.
                                     elapsed_s = (now
                                                  - info["start_t"])
                                     frac = min(
@@ -2665,12 +2671,6 @@ class MidiPresetService:
                                         f" slew_dn({prev:.1f}"
                                         f"-{max_dn:.2f}"
                                         f"→{target:.1f})")
-                                # Always update slew state so
-                                # elapsed_o stays consistent
-                                # across ticks (prevents time
-                                # accumulation on "quiet" notes
-                                # that would let them jump when
-                                # pressure finally changes).
                                 info["last_out"] = target
                                 info["last_out_t"] = now
                                 value = max(0, min(127,
@@ -2697,7 +2697,7 @@ class MidiPresetService:
                                          f"{slew_tag} "
                                          f"→{value}"
                                          f"{sent}")
-                        return  # suppress original channel aftertouch
+                        return  # suppress original aftertouch
                 _put(msg)
             return cb
 
