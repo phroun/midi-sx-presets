@@ -2400,7 +2400,8 @@ class MidiPresetService:
         def make_cb(ch_filter, channel_opts, has_p2p, source):
             # Per-device note tracker:
             #   active[ch][note] = {"vel", "started", "start_t",
-            #                       "last_out", "last_out_t"}
+            #                       "last_out", "last_out_t",
+            #                       "last_sent"}
             # On the first aftertouch message after note-on, the note
             # becomes "started" and the decay floor / slew limiter
             # begin from that moment.  The decay floor starts at
@@ -2435,7 +2436,8 @@ class MidiPresetService:
                             "vel": msg.velocity, "started": False,
                             "start_t": 0.0,
                             "last_out": float(msg.velocity),
-                            "last_out_t": 0.0}
+                            "last_out_t": 0.0,
+                            "last_sent": msg.velocity}
                     elif (msg.type == "note_off"
                           or (msg.type == "note_on" and msg.velocity == 0)):
                         info = active.get(ch, {}).pop(msg.note, None)
@@ -2502,12 +2504,18 @@ class MidiPresetService:
                                     else:
                                         target = max(target,
                                                      prev - max_delta)
+                                # Always update slew state so
+                                # elapsed_o stays consistent
+                                # across ticks (prevents time
+                                # accumulation on "quiet" notes
+                                # that would let them jump when
+                                # pressure finally changes).
+                                info["last_out"] = target
+                                info["last_out_t"] = now
                                 value = max(0, min(127,
                                                    int(round(target))))
-                                if value != int(round(
-                                        info["last_out"])):
-                                    info["last_out"] = float(value)
-                                    info["last_out_t"] = now
+                                if value != info["last_sent"]:
+                                    info["last_sent"] = value
                                     _put(mido.Message(
                                         "polytouch", channel=ch,
                                         note=note, value=value))
