@@ -2316,12 +2316,13 @@ class MidiPresetService:
         """Build per-channel option dicts from device-level + per_channel overrides.
 
         Returns a dict keyed by 0-based channel number.  Each value is a dict
-        with keys ``vtable``, ``p2p`` (bool), ``decay_s`` (float).  Channels
-        without any options are omitted.
+        with keys ``vtable``, ``p2p`` (bool), ``decay_s`` (float),
+        ``debounce_s`` (float).  Channels without any options are omitted.
 
-        Device-level ``velocity_curve``, ``pressure_to_poly`` and
-        ``pressure_decay`` act as defaults; ``per_channel`` entries (keyed by
-        1-based channel number in the YAML) override them.
+        Device-level ``velocity_curve``, ``pressure_to_poly``,
+        ``pressure_decay`` and ``note_debounce`` act as defaults;
+        ``per_channel`` entries (keyed by 1-based channel number in the
+        YAML) override them.
         """
         build_vt = MidiPresetService._build_velocity_table
 
@@ -2347,6 +2348,8 @@ class MidiPresetService:
             default_p2p_chs = set()
 
         default_decay_s = float(inp_cfg.get("pressure_decay", 0)) / 1000.0
+        default_debounce_s = float(
+            inp_cfg.get("note_debounce", 0)) / 1000.0
 
         # Determine every channel that needs an entry
         active_chs = ch_set if ch_set is not None else set(range(16))
@@ -2377,7 +2380,15 @@ class MidiPresetService:
             else:
                 decay_s = default_decay_s
 
-            opts[ch0] = {"vtable": vtable, "p2p": p2p, "decay_s": decay_s}
+            # Note debounce
+            if "note_debounce" in override:
+                debounce_s = float(override["note_debounce"]) / 1000.0
+            else:
+                debounce_s = default_debounce_s
+
+            opts[ch0] = {"vtable": vtable, "p2p": p2p,
+                         "decay_s": decay_s,
+                         "debounce_s": debounce_s}
 
         return opts
 
@@ -2410,10 +2421,38 @@ class MidiPresetService:
             # 127/decay_s units/sec — together they guarantee a smooth
             # transition from velocity to live pressure with no
             # threshold or jitter.
+            #
+            # Note debounce (note_debounce config, ms):
+            #   pending_off[ch][note] = {"off_msg", "expire_t", "info"}
+            # When a note-off arrives too soon after note-on, the note
+            # stays in active and the off is deferred.  If a re-strike
+            # arrives before the timer expires, the pending off is
+            # cancelled (no audible gap).  Expired entries are flushed
+            # on every callback invocation.
             active = {} if has_p2p else None
+            pending_off = {} if has_p2p else None
 
             def _put(m):
                 msg_queue.put((source, m))
+
+            def _flush_pending(now):
+                """Release any debounced note-offs whose timer expired."""
+                if not pending_off:
+                    return
+                for pch in list(pending_off):
+                    pnotes = pending_off[pch]
+                    for pn in list(pnotes):
+                        pend = pnotes[pn]
+                        if now >= pend["expire_t"]:
+                            info = active.get(pch, {}).pop(pn, None)
+                            if info is not None and info["started"]:
+                                _put(mido.Message(
+                                    "polytouch", channel=pch,
+                                    note=pn, value=0))
+                            _put(pend["off_msg"])
+                            del pnotes[pn]
+                    if not pnotes:
+                        del pending_off[pch]
 
             def cb(msg):
                 if (ch_filter is not None
@@ -2429,9 +2468,25 @@ class MidiPresetService:
                 if vtable is not None and hasattr(msg, "velocity"):
                     msg = msg.copy(velocity=vtable[msg.velocity])
 
+                # Flush any expired debounce timers on every tick
+                if pending_off is not None:
+                    _flush_pending(time.monotonic())
+
                 # Track notes for pressure-to-poly conversion
                 if active is not None and ch is not None:
+                    debounce_s = copts.get("debounce_s", 0)
                     if msg.type == "note_on" and msg.velocity > 0:
+                        # If this note has a pending off (contact
+                        # bounce), cancel the deferred release and
+                        # keep the note held — no audible gap.
+                        pend = (pending_off.get(ch, {})
+                                .pop(msg.note, None))
+                        if pend is not None:
+                            # Note is still in active; just clear
+                            # the pending flag.  Suppress the
+                            # redundant note-on so the synth never
+                            # sees an off/on glitch.
+                            return
                         active.setdefault(ch, {})[msg.note] = {
                             "vel": msg.velocity, "started": False,
                             "start_t": 0.0,
@@ -2440,6 +2495,21 @@ class MidiPresetService:
                             "last_sent": msg.velocity}
                     elif (msg.type == "note_off"
                           or (msg.type == "note_on" and msg.velocity == 0)):
+                        if (debounce_s > 0
+                                and msg.note in active.get(ch, {})):
+                            info = active[ch][msg.note]
+                            age = (time.monotonic()
+                                   - info["start_t"])
+                            if info["started"] and age < debounce_s:
+                                # Too soon — defer the release.
+                                # Note stays in active so aftertouch
+                                # keeps it alive during the holdover.
+                                pending_off.setdefault(ch, {})[
+                                    msg.note] = {
+                                    "off_msg": msg,
+                                    "expire_t": (info["start_t"]
+                                                 + debounce_s)}
+                                return
                         info = active.get(ch, {}).pop(msg.note, None)
                         if info is not None and info["started"]:
                             # Reset aftertouch on the synth so the CV
@@ -2557,7 +2627,18 @@ class MidiPresetService:
                     decay_tag = " decay=per-ch"
                 else:
                     decay_tag = ""
-                extras.append(f"pressure_to_poly({p2p_label}{decay_tag})")
+                # Collect unique debounce values across p2p channels
+                db_vals = sorted({ch_opts[c - 1]["debounce_s"]
+                                  for c in p2p_chs})
+                if len(db_vals) == 1 and db_vals[0] > 0:
+                    db_tag = (f" debounce="
+                              f"{int(db_vals[0]*1000)}ms")
+                elif any(d > 0 for d in db_vals):
+                    db_tag = " debounce=per-ch"
+                else:
+                    db_tag = ""
+                extras.append(f"pressure_to_poly({p2p_label}"
+                              f"{decay_tag}{db_tag})")
             # Per-channel overrides summary
             if per_ch_yaml:
                 per_parts = []
@@ -2574,6 +2655,9 @@ class MidiPresetService:
                             "p2p" if over["pressure_to_poly"] else "!p2p")
                     if "pressure_decay" in over:
                         tags.append(f"decay={over['pressure_decay']}ms")
+                    if "note_debounce" in over:
+                        tags.append(
+                            f"debounce={over['note_debounce']}ms")
                     if tags:
                         per_parts.append(f"ch{ch1}:{','.join(tags)}")
                 if per_parts:
