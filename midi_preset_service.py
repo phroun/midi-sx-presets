@@ -2299,6 +2299,76 @@ class MidiPresetService:
                 table[v] = max(high_in, min(127, int(round(out))))
         return table
 
+    @staticmethod
+    def _parse_channel_opts(inp_cfg, ch_set):
+        """Build per-channel option dicts from device-level + per_channel overrides.
+
+        Returns a dict keyed by 0-based channel number.  Each value is a dict
+        with keys ``vtable``, ``p2p`` (bool), ``decay_s`` (float).  Channels
+        without any options are omitted.
+
+        Device-level ``velocity_curve``, ``pressure_to_poly`` and
+        ``pressure_decay`` act as defaults; ``per_channel`` entries (keyed by
+        1-based channel number in the YAML) override them.
+        """
+        build_vt = MidiPresetService._build_velocity_table
+
+        def _parse_vc(vc):
+            if not vc:
+                return None
+            return build_vt(
+                int(vc.get("floor", 1)),
+                int(vc.get("low", 1)),
+                int(vc.get("high", 127)),
+                float(vc.get("curve", 1.0)))
+
+        # --- device-level defaults ---
+        default_vc = inp_cfg.get("velocity_curve")
+        default_vtable = _parse_vc(default_vc)
+
+        p2p_raw = inp_cfg.get("pressure_to_poly")
+        if p2p_raw is True:
+            default_p2p_chs = ch_set if ch_set is not None else set(range(16))
+        elif p2p_raw:
+            default_p2p_chs = {int(c) - 1 for c in p2p_raw}
+        else:
+            default_p2p_chs = set()
+
+        default_decay_s = float(inp_cfg.get("pressure_decay", 0)) / 1000.0
+
+        # Determine every channel that needs an entry
+        active_chs = ch_set if ch_set is not None else set(range(16))
+
+        per_ch_yaml = inp_cfg.get("per_channel", {})
+
+        opts = {}  # 0-based ch → {vtable, p2p, decay_s}
+        for ch0 in active_chs:
+            ch1 = ch0 + 1
+            override = per_ch_yaml.get(ch1, {}) if per_ch_yaml else {}
+
+            # Velocity curve: per-channel override wins
+            if "velocity_curve" in override:
+                vtable = _parse_vc(override["velocity_curve"])
+            else:
+                vtable = default_vtable
+
+            # Pressure-to-poly
+            p2p_over = override.get("pressure_to_poly")
+            if p2p_over is not None:
+                p2p = bool(p2p_over)
+            else:
+                p2p = ch0 in default_p2p_chs
+
+            # Decay
+            if "pressure_decay" in override:
+                decay_s = float(override["pressure_decay"]) / 1000.0
+            else:
+                decay_s = default_decay_s
+
+            opts[ch0] = {"vtable": vtable, "p2p": p2p, "decay_s": decay_s}
+
+        return opts
+
     def _open_extra_input(self, inp_cfg, msg_queue):
         """Open one extra input device with channel filtering into *msg_queue*."""
         device = inp_cfg.get("device", "")
@@ -2309,35 +2379,13 @@ class MidiPresetService:
         # channels are 1-based in config; convert to 0-based set (empty = all)
         ch_set = {c - 1 for c in channels} if channels else None
 
-        # Optional velocity curve table
-        vc = inp_cfg.get("velocity_curve")
-        vel_table = None
-        if vc:
-            vel_table = self._build_velocity_table(
-                int(vc.get("floor", 1)),
-                int(vc.get("low", 1)),
-                int(vc.get("high", 127)),
-                float(vc.get("curve", 1.0)))
+        # Build per-channel options (device defaults + per_channel overrides)
+        ch_opts = self._parse_channel_opts(inp_cfg, ch_set)
 
-        # Optional channel-pressure → polyphonic aftertouch conversion
-        # press_channels: None = disabled, set = specific channels,
-        #                 empty-set-sentinel = all channels
-        p2p = inp_cfg.get("pressure_to_poly")
-        press_channels = None
-        if p2p is True:
-            # Same channels as device filter; if no filter, all channels
-            press_channels = ch_set if ch_set is not None else set(range(16))
-        elif p2p:
-            press_channels = {int(c) - 1 for c in p2p}
+        # Quick lookups for the callback
+        any_p2p = any(o["p2p"] for o in ch_opts.values())
 
-        # Optional pressure decay time (ms).  After a note unlocks, a
-        # decay floor starts at the note's velocity and linearly ramps
-        # down to 0 over this duration, preventing sudden CV drops when
-        # the player lightens pressure quickly after crossing the
-        # threshold.  0 or absent = no decay (raw pressure tracking).
-        p2p_decay_s = float(inp_cfg.get("pressure_decay", 0)) / 1000.0
-
-        def make_cb(ch_filter, vtable, p2p_channels, decay_s):
+        def make_cb(ch_filter, channel_opts, has_p2p):
             # Per-device note tracker:
             #   active[ch][note] = {"vel": int, "unlocked": bool,
             #                       "unlock_t": float}
@@ -2346,19 +2394,24 @@ class MidiPresetService:
             # aftertouch value tracks pressure directly and is allowed
             # to drop below the original velocity (subject to the
             # optional decay floor).
-            active = {} if p2p_channels is not None else None
+            active = {} if has_p2p else None
 
             def cb(msg):
                 if (ch_filter is not None
                         and hasattr(msg, "channel")
                         and msg.channel not in ch_filter):
                     return
-                # Velocity curve
+
+                ch = msg.channel if hasattr(msg, "channel") else None
+                copts = channel_opts.get(ch, {}) if ch is not None else {}
+
+                # Velocity curve (per-channel)
+                vtable = copts.get("vtable")
                 if vtable is not None and hasattr(msg, "velocity"):
                     msg = msg.copy(velocity=vtable[msg.velocity])
+
                 # Track notes for pressure-to-poly conversion
-                if active is not None and hasattr(msg, "channel"):
-                    ch = msg.channel
+                if active is not None and ch is not None:
                     if msg.type == "note_on" and msg.velocity > 0:
                         active.setdefault(ch, {})[msg.note] = {
                             "vel": msg.velocity, "unlocked": False,
@@ -2373,7 +2426,7 @@ class MidiPresetService:
                                 "polytouch", channel=ch,
                                 note=msg.note, value=0))
                     elif (msg.type == "aftertouch"
-                          and ch in p2p_channels):
+                          and copts.get("p2p")):
                         # Convert channel pressure to per-note polytouch.
                         # On the receiving synth aftertouch overwrites
                         # the velocity CV, so the polytouch value IS the
@@ -2394,6 +2447,7 @@ class MidiPresetService:
                         # floor that starts at velocity and linearly
                         # decays to 0 prevents the CV from dropping
                         # faster than the configured rate.
+                        decay_s = copts.get("decay_s", 0)
                         notes = active.get(ch, {})
                         if notes:
                             pressure = msg.value
@@ -2427,26 +2481,58 @@ class MidiPresetService:
         try:
             port = mido.open_input(
                 device,
-                callback=make_cb(ch_set, vel_table, press_channels,
-                                p2p_decay_s))
+                callback=make_cb(ch_set, ch_opts, any_p2p))
             self.extra_inputs.append(port)
             ch_str = ", ".join(str(c) for c in channels) if channels else "all"
             extras = []
-            if vc:
+            # Log per-channel overrides
+            per_ch_yaml = inp_cfg.get("per_channel", {})
+            # Device-level velocity curve (shown only when no per-channel)
+            vc = inp_cfg.get("velocity_curve")
+            if vc and not per_ch_yaml:
                 extras.append(
                     f"vel_curve(floor={vc.get('floor', 1)} "
                     f"low={vc.get('low', 1)} "
                     f"high={vc.get('high', 127)} "
                     f"curve={vc.get('curve', 1.0)})")
-            if press_channels is not None:
-                decay_ms = int(p2p_decay_s * 1000)
-                decay_tag = f" decay={decay_ms}ms" if decay_ms else ""
-                if p2p is True:
-                    extras.append(f"pressure_to_poly(all{decay_tag})")
+            # Pressure-to-poly summary
+            p2p_chs = sorted(ch0 + 1 for ch0, o in ch_opts.items()
+                             if o["p2p"])
+            if p2p_chs:
+                if set(p2p_chs) == set(channels or range(1, 17)):
+                    p2p_label = "all"
                 else:
-                    p2p_str = ",".join(str(c) for c in sorted(p2p))
-                    extras.append(
-                        f"pressure_to_poly(ch {p2p_str}{decay_tag})")
+                    p2p_label = "ch " + ",".join(str(c) for c in p2p_chs)
+                # Collect unique decay values across p2p channels
+                decay_vals = sorted({ch_opts[c - 1]["decay_s"]
+                                     for c in p2p_chs})
+                if len(decay_vals) == 1 and decay_vals[0] > 0:
+                    decay_tag = f" decay={int(decay_vals[0]*1000)}ms"
+                elif any(d > 0 for d in decay_vals):
+                    decay_tag = " decay=per-ch"
+                else:
+                    decay_tag = ""
+                extras.append(f"pressure_to_poly({p2p_label}{decay_tag})")
+            # Per-channel overrides summary
+            if per_ch_yaml:
+                per_parts = []
+                for ch1 in sorted(per_ch_yaml):
+                    over = per_ch_yaml[ch1]
+                    tags = []
+                    if "velocity_curve" in over:
+                        ovc = over["velocity_curve"]
+                        tags.append(
+                            f"vel(f={ovc.get('floor', 1)} "
+                            f"c={ovc.get('curve', 1.0)})")
+                    if "pressure_to_poly" in over:
+                        tags.append(
+                            "p2p" if over["pressure_to_poly"] else "!p2p")
+                    if "pressure_decay" in over:
+                        tags.append(f"decay={over['pressure_decay']}ms")
+                    if tags:
+                        per_parts.append(f"ch{ch1}:{','.join(tags)}")
+                if per_parts:
+                    extras.append(f"per_ch[{'; '.join(per_parts)}]")
             suffix = f" {' '.join(extras)}" if extras else ""
             _log("OPEN", f"Input device : {device} (ch {ch_str}){suffix}")
         except OSError as exc:
