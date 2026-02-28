@@ -2479,15 +2479,13 @@ class MidiPresetService:
             # Per-device note tracker:
             #   active[ch][note] = {"vel", "started", "start_t",
             #                       "last_out", "last_out_t",
-            #                       "last_sent"}
+            #                       "last_sent", "last_pressure"}
             # On the first aftertouch message after note-on, the note
             # becomes "started" and the decay floor / slew limiter
-            # begin from that moment.  The decay floor starts at
-            # velocity and linearly drops to 0 over pressure_decay ms,
-            # and the slew limiter caps the output rate-of-change to
-            # 127/decay_s units/sec — together they guarantee a smooth
-            # transition from velocity to live pressure with no
-            # threshold or jitter.
+            # begin from that moment.  A background tick thread
+            # re-evaluates decay/slew every ~15 ms so the output
+            # keeps updating even when no physical pressure changes
+            # arrive.
             #
             # Note debounce (note_debounce config, ms):
             #   pending_off[ch][note] = {"off_msg", "expire_t", "info"}
@@ -2498,6 +2496,7 @@ class MidiPresetService:
             # on every callback invocation.
             active = {} if has_p2p else None
             pending_off = {} if has_p2p else None
+            p2p_lock = threading.Lock() if has_p2p else None
 
             def _put(m):
                 msg_queue.put((source, m))
@@ -2521,6 +2520,123 @@ class MidiPresetService:
                     if not pnotes:
                         del pending_off[pch]
 
+            def _p2p_calc(ch, note, info, pressure, copts, now,
+                          is_tick=False):
+                """Compute decay floor + slew and send polytouch.
+
+                *pressure* must already be ptable-transformed.
+                Caller must hold p2p_lock.
+                """
+                decay_s = copts.get("decay_s", 0)
+                sustain_pct = copts.get("sustain_pct", 0)
+                slew_up = copts.get("slew_up", 0)
+                slew_down = copts.get("slew_down", 0)
+                ptable = copts.get("ptable")
+                if (decay_s > 0
+                        and slew_up == 0 and slew_down == 0):
+                    slew_down = 127.0 / decay_s
+
+                vel = info["vel"]
+                is_start = False
+                if not info["started"]:
+                    info["started"] = True
+                    info["start_t"] = now
+                    info["last_out"] = float(vel)
+                    info["last_out_t"] = now
+                    is_start = True
+
+                target = float(pressure)
+                floor_v = 0.0
+                if decay_s > 0:
+                    elapsed_s = now - info["start_t"]
+                    frac = min(1.0, elapsed_s / decay_s)
+                    # Decay target: pressure floor (from pressure
+                    # curve) or velocity-based sustain, whichever
+                    # is higher.  pressure_curve.floor is the
+                    # lowest the decay can settle to; sustain_pct
+                    # is the legacy velocity-relative floor.
+                    pfloor = (float(ptable[1])
+                              if ptable is not None else 0.0)
+                    sus_level = vel * sustain_pct / 100.0
+                    decay_target = max(pfloor, sus_level)
+                    floor_v = (decay_target
+                               + (vel - decay_target)
+                               * (1.0 - frac))
+                    target = max(target, floor_v)
+
+                pre_slew = target
+                # Asymmetric slew rate limiter
+                elapsed_o = now - info["last_out_t"]
+                prev = info["last_out"]
+                slew_tag = ""
+                if target > prev and slew_up > 0:
+                    max_up = slew_up * elapsed_o
+                    target = min(target, prev + max_up)
+                    slew_tag = (
+                        f" slew_up({prev:.1f}"
+                        f"+{max_up:.2f}"
+                        f"→{target:.1f})")
+                elif target < prev and slew_down > 0:
+                    max_dn = slew_down * elapsed_o
+                    target = max(target, prev - max_dn)
+                    slew_tag = (
+                        f" slew_dn({prev:.1f}"
+                        f"-{max_dn:.2f}"
+                        f"→{target:.1f})")
+                info["last_out"] = target
+                info["last_out_t"] = now
+                value = max(0, min(127, int(round(target))))
+                sent = ""
+                if value != info["last_sent"]:
+                    info["last_sent"] = value
+                    _put(mido.Message(
+                        "polytouch", channel=ch,
+                        note=note, value=value))
+                    sent = " SEND"
+                if is_start:
+                    _log("P2P",
+                         f"ch{ch+1}/n{note} "
+                         f"vel={vel} START "
+                         f"pres={pressure}")
+                elif not is_tick and (
+                        sent or int(pre_slew) != value):
+                    _log("P2P",
+                         f"ch{ch+1}/n{note} "
+                         f"p={pressure} "
+                         f"fl={floor_v:.0f} "
+                         f"tgt={pre_slew:.0f}"
+                         f"{slew_tag} "
+                         f"→{value}"
+                         f"{sent}")
+
+            # Background tick thread: re-evaluate decay/slew for
+            # active notes so output updates even when no physical
+            # pressure messages arrive.
+            def _p2p_tick_loop():
+                while not self._state_stop.is_set():
+                    if active:
+                        with p2p_lock:
+                            now = time.monotonic()
+                            _flush_pending(now)
+                            for ch in list(active):
+                                ch_notes = active[ch]
+                                copts = channel_opts.get(ch, {})
+                                for note in list(ch_notes):
+                                    info = ch_notes[note]
+                                    if not info["started"]:
+                                        continue
+                                    _p2p_calc(
+                                        ch, note, info,
+                                        info["last_pressure"],
+                                        copts, now,
+                                        is_tick=True)
+                    self._state_stop.wait(0.015)
+
+            if has_p2p:
+                tick_t = threading.Thread(
+                    target=_p2p_tick_loop, daemon=True)
+                tick_t.start()
+
             def cb(msg):
                 if (ch_filter is not None
                         and hasattr(msg, "channel")
@@ -2535,185 +2651,84 @@ class MidiPresetService:
                 if vtable is not None and hasattr(msg, "velocity"):
                     msg = msg.copy(velocity=vtable[msg.velocity])
 
-                # Flush any expired debounce timers on every tick
-                if pending_off is not None:
-                    _flush_pending(time.monotonic())
-
                 # Track notes for pressure-to-poly conversion
                 if active is not None and ch is not None:
-                    debounce_s = copts.get("debounce_s", 0)
-                    if msg.type == "note_on" and msg.velocity > 0:
-                        # If this note has a pending off (contact
-                        # bounce), cancel the deferred release and
-                        # keep the note held — no audible gap.
-                        pend = (pending_off.get(ch, {})
-                                .pop(msg.note, None))
-                        if pend is not None:
-                            # Note is still in active; just clear
-                            # the pending flag.  Suppress the
-                            # redundant note-on so the synth never
-                            # sees an off/on glitch.
-                            return
-                        active.setdefault(ch, {})[msg.note] = {
-                            "vel": msg.velocity, "started": False,
-                            "start_t": 0.0,
-                            "last_out": float(msg.velocity),
-                            "last_out_t": 0.0,
-                            "last_sent": msg.velocity}
-                        _log("P2P", f"ch{ch+1}/n{msg.note} "
-                             f"vel={msg.velocity} TRACK")
-                    elif (msg.type == "note_off"
-                          or (msg.type == "note_on" and msg.velocity == 0)):
-                        if (debounce_s > 0
-                                and msg.note in active.get(ch, {})):
-                            info = active[ch][msg.note]
-                            age = (time.monotonic()
-                                   - info["start_t"])
-                            if info["started"] and age < debounce_s:
-                                # Too soon — defer the release.
-                                # Note stays in active so aftertouch
-                                # keeps it alive during the holdover.
-                                pending_off.setdefault(ch, {})[
-                                    msg.note] = {
-                                    "off_msg": msg,
-                                    "expire_t": (info["start_t"]
-                                                 + debounce_s)}
+                    with p2p_lock:
+                        _flush_pending(time.monotonic())
+                        debounce_s = copts.get("debounce_s", 0)
+                        if msg.type == "note_on" and msg.velocity > 0:
+                            pend = (pending_off.get(ch, {})
+                                    .pop(msg.note, None))
+                            if pend is not None:
                                 return
-                        info = active.get(ch, {}).pop(msg.note, None)
-                        if info is not None and info["started"]:
+                            active.setdefault(ch, {})[msg.note] = {
+                                "vel": msg.velocity,
+                                "started": False,
+                                "start_t": 0.0,
+                                "last_out": float(msg.velocity),
+                                "last_out_t": 0.0,
+                                "last_sent": msg.velocity,
+                                "last_pressure": 0}
                             _log("P2P", f"ch{ch+1}/n{msg.note} "
-                                 f"vel={info['vel']} OFF "
-                                 f"last_out={info['last_out']:.1f}")
-                            # Reset aftertouch on the synth so the CV
-                            # doesn't stay stuck at the last value
-                            _put(mido.Message(
-                                "polytouch", channel=ch,
-                                note=msg.note, value=0))
-                    elif (msg.type in ("aftertouch", "polytouch")
-                          and copts.get("p2p")):
-                        # Pressure-to-poly pipeline: applies to both
-                        # channel aftertouch (one pressure for all
-                        # notes) and polyphonic aftertouch (per-note
-                        # pressure).  Either way the output is
-                        # polytouch with decay floor + sustain + slew.
-                        #
-                        # The floor decays from velocity to a sustain
-                        # level (vel * sustain_pct/100) over decay_s.
-                        # The rate is proportional to velocity, so ALL
-                        # notes get the full decay period regardless of
-                        # how hard they were struck.  After the decay
-                        # period the floor holds at the sustain level
-                        # permanently (sustain=0 → decays to zero,
-                        # sustain=50 → holds at half of velocity).
-                        #
-                        # Separate slew_up / slew_down rates (steps/sec)
-                        # cap the output rate-of-change independently:
-                        # slew_down smooths the decay; slew_up controls
-                        # how quickly pressing harder takes effect
-                        # (0 = unlimited).
-                        #
-                        # Messages are only sent when the integer output
-                        # value actually changes, to avoid flooding the
-                        # MIDI port with redundant polytouch messages.
-                        decay_s = copts.get("decay_s", 0)
-                        sustain_pct = copts.get("sustain_pct", 0)
-                        slew_up = copts.get("slew_up", 0)
-                        slew_down = copts.get("slew_down", 0)
-                        ptable = copts.get("ptable")
-                        # Legacy fallback: if decay is set but neither
-                        # slew rate is, use vel/decay_s-scale as
-                        # slew_down (smooth downward tracking).
-                        if (decay_s > 0
-                                and slew_up == 0 and slew_down == 0):
-                            slew_down = 127.0 / decay_s
-                        ch_notes = active.get(ch, {})
-                        # Build list of (note, info, pressure) tuples.
-                        # Channel aftertouch → same pressure for all.
-                        # Polyphonic aftertouch → single note only.
-                        if msg.type == "polytouch":
-                            info = ch_notes.get(msg.note)
-                            note_list = ([(msg.note, info, msg.value)]
-                                         if info else [])
-                        else:
-                            note_list = [
-                                (n, inf, msg.value)
-                                for n, inf in ch_notes.items()]
-                        if note_list:
-                            now = time.monotonic()
-                            for note, info, pressure in note_list:
-                                # Apply pressure curve (if
-                                # configured) before floor/slew.
-                                if ptable is not None:
-                                    pressure = ptable[pressure]
-                                vel = info["vel"]
-                                is_start = False
-                                if not info["started"]:
-                                    info["started"] = True
-                                    info["start_t"] = now
-                                    info["last_out"] = float(vel)
-                                    info["last_out_t"] = now
-                                    is_start = True
-                                target = float(pressure)
-                                floor_v = 0.0
-                                if decay_s > 0:
-                                    elapsed_s = (now
-                                                 - info["start_t"])
-                                    frac = min(
-                                        1.0,
-                                        elapsed_s / decay_s)
-                                    sus = sustain_pct / 100.0
-                                    floor_v = vel * (
-                                        1.0 - frac * (1.0 - sus))
-                                    target = max(target, floor_v)
-                                pre_slew = target
-                                # Asymmetric slew rate limiter
-                                elapsed_o = (now
-                                             - info["last_out_t"])
-                                prev = info["last_out"]
-                                slew_tag = ""
-                                if target > prev and slew_up > 0:
-                                    max_up = slew_up * elapsed_o
-                                    target = min(target,
-                                                 prev + max_up)
-                                    slew_tag = (
-                                        f" slew_up({prev:.1f}"
-                                        f"+{max_up:.2f}"
-                                        f"→{target:.1f})")
-                                elif target < prev and slew_down > 0:
-                                    max_dn = slew_down * elapsed_o
-                                    target = max(target,
-                                                 prev - max_dn)
-                                    slew_tag = (
-                                        f" slew_dn({prev:.1f}"
-                                        f"-{max_dn:.2f}"
-                                        f"→{target:.1f})")
-                                info["last_out"] = target
-                                info["last_out_t"] = now
-                                value = max(0, min(127,
-                                                   int(round(target))))
-                                sent = ""
-                                if value != info["last_sent"]:
-                                    info["last_sent"] = value
-                                    _put(mido.Message(
-                                        "polytouch", channel=ch,
-                                        note=note, value=value))
-                                    sent = " SEND"
-                                if is_start:
-                                    _log("P2P",
-                                         f"ch{ch+1}/n{note} "
-                                         f"vel={vel} START "
-                                         f"pres={pressure}")
-                                elif sent or (
-                                        int(pre_slew) != value):
-                                    _log("P2P",
-                                         f"ch{ch+1}/n{note} "
-                                         f"p={pressure} "
-                                         f"fl={floor_v:.0f} "
-                                         f"tgt={pre_slew:.0f}"
-                                         f"{slew_tag} "
-                                         f"→{value}"
-                                         f"{sent}")
-                        return  # suppress original aftertouch
+                                 f"vel={msg.velocity} TRACK")
+                        elif (msg.type == "note_off"
+                              or (msg.type == "note_on"
+                                  and msg.velocity == 0)):
+                            if (debounce_s > 0
+                                    and msg.note
+                                    in active.get(ch, {})):
+                                info = active[ch][msg.note]
+                                age = (time.monotonic()
+                                       - info["start_t"])
+                                if (info["started"]
+                                        and age < debounce_s):
+                                    pending_off.setdefault(
+                                        ch, {})[msg.note] = {
+                                        "off_msg": msg,
+                                        "expire_t": (
+                                            info["start_t"]
+                                            + debounce_s)}
+                                    return
+                            info = (active.get(ch, {})
+                                    .pop(msg.note, None))
+                            if (info is not None
+                                    and info["started"]):
+                                _log("P2P",
+                                     f"ch{ch+1}/n{msg.note} "
+                                     f"vel={info['vel']} OFF "
+                                     f"last_out="
+                                     f"{info['last_out']:.1f}")
+                                _put(mido.Message(
+                                    "polytouch", channel=ch,
+                                    note=msg.note, value=0))
+                        elif (msg.type in (
+                                  "aftertouch", "polytouch")
+                              and copts.get("p2p")):
+                            ptable = copts.get("ptable")
+                            ch_notes = active.get(ch, {})
+                            if msg.type == "polytouch":
+                                info = ch_notes.get(msg.note)
+                                note_list = (
+                                    [(msg.note, info, msg.value)]
+                                    if info else [])
+                            else:
+                                note_list = [
+                                    (n, inf, msg.value)
+                                    for n, inf in
+                                    ch_notes.items()]
+                            if note_list:
+                                now = time.monotonic()
+                                for note, info, pressure \
+                                        in note_list:
+                                    if ptable is not None:
+                                        pressure = (
+                                            ptable[pressure])
+                                    info["last_pressure"] = (
+                                        pressure)
+                                    _p2p_calc(
+                                        ch, note, info,
+                                        pressure, copts, now)
+                            return  # suppress original aftertouch
                 _put(msg)
             return cb
 
