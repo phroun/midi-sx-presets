@@ -2317,13 +2317,15 @@ class MidiPresetService:
 
         Returns a dict keyed by 0-based channel number.  Each value is a dict
         with keys ``vtable``, ``p2p`` (bool), ``decay_s`` (float),
-        ``slew_up`` (float, steps/sec), ``slew_down`` (float, steps/sec),
-        ``debounce_s`` (float).  Channels without any options are omitted.
+        ``sustain_pct`` (float, 0–100), ``slew_up`` (float, steps/sec),
+        ``slew_down`` (float, steps/sec), ``debounce_s`` (float).
+        Channels without any options are omitted.
 
         Device-level ``velocity_curve``, ``pressure_to_poly``,
-        ``pressure_decay``, ``slew_up``, ``slew_down`` and
-        ``note_debounce`` act as defaults; ``per_channel`` entries
-        (keyed by 1-based channel number in the YAML) override them.
+        ``pressure_decay``, ``pressure_sustain``, ``slew_up``,
+        ``slew_down`` and ``note_debounce`` act as defaults;
+        ``per_channel`` entries (keyed by 1-based channel number in
+        the YAML) override them.
         """
         build_vt = MidiPresetService._build_velocity_table
 
@@ -2349,6 +2351,11 @@ class MidiPresetService:
             default_p2p_chs = set()
 
         default_decay_s = float(inp_cfg.get("pressure_decay", 0)) / 1000.0
+        # Sustain: percentage of velocity to hold as permanent floor
+        # after the decay period.  0 = decay to zero (default),
+        # 100 = velocity is permanent minimum (aftertouch only adds).
+        default_sustain_pct = float(
+            inp_cfg.get("pressure_sustain", 0))
         # Slew rates in steps/sec.  0 = unlimited (no limiting).
         # Legacy behaviour: when omitted, slew_down defaults to
         # 127/decay_s (matching the old symmetric rate) and slew_up
@@ -2388,6 +2395,12 @@ class MidiPresetService:
             else:
                 decay_s = default_decay_s
 
+            # Sustain
+            if "pressure_sustain" in override:
+                sustain_pct = float(override["pressure_sustain"])
+            else:
+                sustain_pct = default_sustain_pct
+
             # Slew rates (steps/sec)
             if "slew_up" in override:
                 slew_up = float(override["slew_up"])
@@ -2406,6 +2419,7 @@ class MidiPresetService:
 
             opts[ch0] = {"vtable": vtable, "p2p": p2p,
                          "decay_s": decay_s,
+                         "sustain_pct": sustain_pct,
                          "slew_up": slew_up,
                          "slew_down": slew_down,
                          "debounce_s": debounce_s}
@@ -2544,29 +2558,33 @@ class MidiPresetService:
                         # the velocity CV, so the polytouch value IS the
                         # new velocity.
                         #
-                        # Decay floor + slew limiter: when pressure_decay
-                        # is set, a floor decays from velocity at a
-                        # constant rate of 127/decay_s units per second
-                        # (so higher-velocity notes hold proportionally
-                        # longer).  Separate slew_up / slew_down rates
-                        # (steps/sec) cap the output rate-of-change
-                        # independently: slew_down smooths the decay,
-                        # while slew_up controls how quickly pressing
-                        # harder takes effect (0 = unlimited).  When
-                        # neither slew is configured but decay is,
-                        # slew_down defaults to 127/decay_s for
-                        # backwards-compatible smooth decay.
+                        # Decay floor + sustain + slew limiter.
+                        #
+                        # The floor decays from velocity to a sustain
+                        # level (vel * sustain_pct/100) over decay_s.
+                        # The rate is proportional to velocity, so ALL
+                        # notes get the full decay period regardless of
+                        # how hard they were struck.  After the decay
+                        # period the floor holds at the sustain level
+                        # permanently (sustain=0 → decays to zero,
+                        # sustain=50 → holds at half of velocity).
+                        #
+                        # Separate slew_up / slew_down rates (steps/sec)
+                        # cap the output rate-of-change independently:
+                        # slew_down smooths the decay; slew_up controls
+                        # how quickly pressing harder takes effect
+                        # (0 = unlimited).
                         #
                         # Messages are only sent when the integer output
                         # value actually changes, to avoid flooding the
                         # MIDI port with redundant polytouch messages.
                         decay_s = copts.get("decay_s", 0)
+                        sustain_pct = copts.get("sustain_pct", 0)
                         slew_up = copts.get("slew_up", 0)
                         slew_down = copts.get("slew_down", 0)
                         # Legacy fallback: if decay is set but neither
-                        # slew rate is, use 127/decay_s as slew_down
-                        # (matches old symmetric behaviour for the
-                        # downward direction only).
+                        # slew rate is, use vel/decay_s-scale as
+                        # slew_down (smooth downward tracking).
                         if (decay_s > 0
                                 and slew_up == 0 and slew_down == 0):
                             slew_down = 127.0 / decay_s
@@ -2583,17 +2601,18 @@ class MidiPresetService:
                                     info["last_out_t"] = now
                                 target = float(pressure)
                                 if decay_s > 0:
-                                    # Decay floor — constant rate
-                                    # for all velocities; higher
-                                    # vel = proportionally longer
-                                    # time to reach 0.
+                                    # Floor decays from vel to
+                                    # vel*sustain_pct/100 over
+                                    # decay_s, then holds there.
                                     elapsed_s = (now
                                                  - info["start_t"])
-                                    floor = vel - (
-                                        127.0 * elapsed_s
-                                        / decay_s)
-                                    if floor > 0:
-                                        target = max(target, floor)
+                                    frac = min(
+                                        1.0,
+                                        elapsed_s / decay_s)
+                                    sus = sustain_pct / 100.0
+                                    floor = vel * (
+                                        1.0 - frac * (1.0 - sus))
+                                    target = max(target, floor)
                                 # Asymmetric slew rate limiter
                                 elapsed_o = (now
                                              - info["last_out_t"])
@@ -2659,6 +2678,15 @@ class MidiPresetService:
                     decay_tag = " decay=per-ch"
                 else:
                     decay_tag = ""
+                # Collect unique sustain values across p2p channels
+                sus_vals = sorted({ch_opts[c - 1]["sustain_pct"]
+                                   for c in p2p_chs})
+                if len(sus_vals) == 1 and sus_vals[0] > 0:
+                    sus_tag = f" sustain={int(sus_vals[0])}%"
+                elif any(v > 0 for v in sus_vals):
+                    sus_tag = " sustain=per-ch"
+                else:
+                    sus_tag = ""
                 # Collect unique slew values across p2p channels
                 su_vals = sorted({ch_opts[c - 1]["slew_up"]
                                   for c in p2p_chs})
@@ -2689,7 +2717,8 @@ class MidiPresetService:
                 else:
                     db_tag = ""
                 extras.append(f"pressure_to_poly({p2p_label}"
-                              f"{decay_tag}{slew_tag}{db_tag})")
+                              f"{decay_tag}{sus_tag}"
+                              f"{slew_tag}{db_tag})")
             # Per-channel overrides summary
             if per_ch_yaml:
                 per_parts = []
@@ -2706,6 +2735,9 @@ class MidiPresetService:
                             "p2p" if over["pressure_to_poly"] else "!p2p")
                     if "pressure_decay" in over:
                         tags.append(f"decay={over['pressure_decay']}ms")
+                    if "pressure_sustain" in over:
+                        tags.append(
+                            f"sustain={over['pressure_sustain']}%")
                     if "slew_up" in over:
                         tags.append(
                             f"slew_up={over['slew_up']}")
