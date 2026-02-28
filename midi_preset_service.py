@@ -2453,16 +2453,18 @@ class MidiPresetService:
                         # new velocity.
                         #
                         # Decay floor + slew limiter: when pressure_decay
-                        # is set, a floor decays from velocity toward 0
-                        # over that duration, and the output is also
-                        # slew-rate-limited so that it never changes
-                        # faster than 127/decay_s units per second in
-                        # either direction.  The floor keeps the CV at
-                        # velocity initially and eases it toward live
-                        # pressure; the slew limiter eliminates jitter
-                        # from noisy pressure sensors.  No velocity
-                        # threshold is needed — the combination of floor
-                        # and slew guarantees a smooth transition.
+                        # is set, a floor decays from velocity at a
+                        # constant rate of 127/decay_s units per second
+                        # (so higher-velocity notes hold proportionally
+                        # longer), and the output is slew-rate-limited
+                        # at the same rate in both directions.  No
+                        # velocity threshold is needed — the combination
+                        # guarantees a smooth transition from velocity
+                        # to live pressure with no jitter.
+                        #
+                        # Messages are only sent when the integer output
+                        # value actually changes, to avoid flooding the
+                        # MIDI port with redundant polytouch messages.
                         decay_s = copts.get("decay_s", 0)
                         notes = active.get(ch, {})
                         if notes:
@@ -2477,13 +2479,16 @@ class MidiPresetService:
                                     info["last_out_t"] = now
                                 target = float(pressure)
                                 if decay_s > 0:
-                                    # Decay floor
+                                    # Decay floor — constant rate
+                                    # for all velocities; higher
+                                    # vel = proportionally longer
+                                    # time to reach 0.
                                     elapsed_s = (now
                                                  - info["start_t"])
-                                    if elapsed_s < decay_s:
-                                        floor = vel * (
-                                            1.0 - elapsed_s
-                                            / decay_s)
+                                    floor = vel - (
+                                        127.0 * elapsed_s
+                                        / decay_s)
+                                    if floor > 0:
                                         target = max(target, floor)
                                     # Slew rate limiter
                                     elapsed_o = (now
@@ -2499,11 +2504,13 @@ class MidiPresetService:
                                                      prev - max_delta)
                                 value = max(0, min(127,
                                                    int(round(target))))
-                                info["last_out"] = float(value)
-                                info["last_out_t"] = now
-                                _put(mido.Message(
-                                    "polytouch", channel=ch,
-                                    note=note, value=value))
+                                if value != int(round(
+                                        info["last_out"])):
+                                    info["last_out"] = float(value)
+                                    info["last_out_t"] = now
+                                    _put(mido.Message(
+                                        "polytouch", channel=ch,
+                                        note=note, value=value))
                         return  # suppress original channel aftertouch
                 _put(msg)
             return cb
