@@ -175,6 +175,7 @@ class MidiPresetService:
         self.midi_out = None
         self.midi_return = None  # Recall output (= midi_out in standalone mode)
         self.extra_inputs = []   # Additional input ports from routing.inputs
+        self.p2p_channels = set()  # 0-based channels with pressure-to-poly
 
     # -- Config / persistence -------------------------------------------------
 
@@ -2277,6 +2278,15 @@ class MidiPresetService:
             self._forward(msg)
             return
 
+        # Suppress raw channel aftertouch for P2P channels — the extra
+        # input callback handles these via polytouch with floor/slew.
+        # Without this guard, aftertouch arriving on the primary input
+        # (IAC bus, DAW echo) would bypass P2P and hit the synth raw.
+        if (msg.type == "aftertouch"
+                and hasattr(msg, "channel")
+                and msg.channel in self.p2p_channels):
+            return
+
         # All other events (pitch bend, channel aftertouch, etc.) — forward unchanged
         self._forward(msg)
 
@@ -2441,6 +2451,13 @@ class MidiPresetService:
 
         # Quick lookups for the callback
         any_p2p = any(o["p2p"] for o in ch_opts.values())
+
+        # Register P2P channels so the main handler can suppress raw
+        # channel aftertouch that leaks through the primary input
+        # (IAC bus, DAW echo, etc.) — otherwise it would bypass the
+        # floor / slew and hit the synth unprocessed.
+        self.p2p_channels.update(
+            ch0 for ch0, o in ch_opts.items() if o["p2p"])
 
         def make_cb(ch_filter, channel_opts, has_p2p, source):
             # Per-device note tracker:
