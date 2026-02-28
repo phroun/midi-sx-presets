@@ -2309,7 +2309,7 @@ class MidiPresetService:
         - Index 0 stays 0 (velocity 0 = note-off semantics).
         - [1, low_in)  → floor_vel  (clamp quiet playing to the floor).
         - [low_in, high_in] → [floor_vel, high_in] via power curve.
-        - (high_in, 127] → linear from high_in to 127.
+        - (high_in, 127] → high_in  (hard ceiling).
         """
         table = [0] * 128
         for v in range(1, 128):
@@ -2318,12 +2318,10 @@ class MidiPresetService:
             elif v <= high_in:
                 t = (v - low_in) / (high_in - low_in)
                 out = floor_vel + (high_in - floor_vel) * (t ** curve_exp)
-                table[v] = max(floor_vel, min(127, int(round(out))))
+                table[v] = max(floor_vel, min(high_in, int(round(out))))
             else:
-                # Linear from high_in to 127
-                t = (v - high_in) / (127 - high_in) if high_in < 127 else 0
-                out = high_in + (127 - high_in) * t
-                table[v] = max(high_in, min(127, int(round(out))))
+                # Hard ceiling — anything above high_in clamps
+                table[v] = high_in
         return table
 
     @staticmethod
