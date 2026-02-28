@@ -2309,29 +2309,73 @@ class MidiPresetService:
                 int(vc.get("high", 127)),
                 float(vc.get("curve", 1.0)))
 
-        def make_cb(ch_filter, vtable):
+        # Optional channel-pressure → polyphonic aftertouch conversion
+        # press_channels: None = disabled, set = specific channels,
+        #                 empty-set-sentinel = all channels
+        p2p = inp_cfg.get("pressure_to_poly")
+        press_channels = None
+        if p2p is True:
+            # Same channels as device filter; if no filter, all channels
+            press_channels = ch_set if ch_set is not None else set(range(16))
+        elif p2p:
+            press_channels = {int(c) - 1 for c in p2p}
+
+        def make_cb(ch_filter, vtable, p2p_channels):
+            # Per-device note tracker: {channel_0based: {note: velocity}}
+            active = {} if p2p_channels is not None else None
+
             def cb(msg):
                 if (ch_filter is not None
                         and hasattr(msg, "channel")
                         and msg.channel not in ch_filter):
                     return
+                # Velocity curve
                 if vtable is not None and hasattr(msg, "velocity"):
                     msg = msg.copy(velocity=vtable[msg.velocity])
+                # Track notes for pressure-to-poly conversion
+                if active is not None and hasattr(msg, "channel"):
+                    ch = msg.channel
+                    if msg.type == "note_on" and msg.velocity > 0:
+                        active.setdefault(ch, {})[msg.note] = msg.velocity
+                    elif (msg.type == "note_off"
+                          or (msg.type == "note_on" and msg.velocity == 0)):
+                        active.get(ch, {}).pop(msg.note, None)
+                    elif (msg.type == "aftertouch"
+                          and ch in p2p_channels):
+                        # Convert to weighted polytouch per active note
+                        notes = active.get(ch, {})
+                        if notes:
+                            pressure = msg.value
+                            for note, vel in notes.items():
+                                scaled = int(round(pressure * vel / 127))
+                                msg_queue.put(mido.Message(
+                                    "polytouch", channel=ch, note=note,
+                                    value=max(0, min(127, scaled))))
+                        return  # suppress original channel aftertouch
                 msg_queue.put(msg)
             return cb
 
         try:
-            port = mido.open_input(device, callback=make_cb(ch_set, vel_table))
+            port = mido.open_input(
+                device,
+                callback=make_cb(ch_set, vel_table, press_channels))
             self.extra_inputs.append(port)
             ch_str = ", ".join(str(c) for c in channels) if channels else "all"
-            vel_str = ""
+            extras = []
             if vc:
-                vel_str = (f" vel_curve("
-                           f"floor={vc.get('floor', 1)} "
-                           f"low={vc.get('low', 1)} "
-                           f"high={vc.get('high', 127)} "
-                           f"curve={vc.get('curve', 1.0)})")
-            _log("OPEN", f"Input device : {device} (ch {ch_str}){vel_str}")
+                extras.append(
+                    f"vel_curve(floor={vc.get('floor', 1)} "
+                    f"low={vc.get('low', 1)} "
+                    f"high={vc.get('high', 127)} "
+                    f"curve={vc.get('curve', 1.0)})")
+            if press_channels is not None:
+                if p2p is True:
+                    extras.append("pressure_to_poly(all)")
+                else:
+                    p2p_str = ",".join(str(c) for c in sorted(p2p))
+                    extras.append(f"pressure_to_poly(ch {p2p_str})")
+            suffix = f" {' '.join(extras)}" if extras else ""
+            _log("OPEN", f"Input device : {device} (ch {ch_str}){suffix}")
         except OSError as exc:
             _log("WARN", f"Could not open input '{device}': {exc}")
 
