@@ -1963,6 +1963,8 @@ class MidiPresetService:
                         "out_ch": out_ch,
                         "name": name,
                         "inst_name": inst_name,
+                        "poly_to_chan": bool(
+                            nm.get("after_poly_to_chan")),
                     })
                 else:
                     actions = self._poly_note_off(
@@ -2237,9 +2239,17 @@ class MidiPresetService:
                         if active:
                             out_note = msg.note + active["transpose"]
                             if 0 <= out_note <= 127:
-                                self._forward(msg.copy(
-                                    note=out_note,
-                                    channel=active["out_ch"]))
+                                if info.get("poly_to_chan"):
+                                    # Convert polytouch → channel aftertouch
+                                    # on the distributed channel
+                                    self._forward(mido.Message(
+                                        "aftertouch",
+                                        channel=active["out_ch"],
+                                        value=msg.value))
+                                else:
+                                    self._forward(msg.copy(
+                                        note=out_note,
+                                        channel=active["out_ch"]))
                     else:
                         out_note = msg.note + info["transpose"]
                         if 0 <= out_note <= 127:
@@ -2321,7 +2331,12 @@ class MidiPresetService:
             press_channels = {int(c) - 1 for c in p2p}
 
         def make_cb(ch_filter, vtable, p2p_channels):
-            # Per-device note tracker: {channel_0based: {note: velocity}}
+            # Per-device note tracker:
+            #   active[ch][note] = {"vel": int, "unlocked": bool}
+            # "unlocked" becomes True once channel pressure reaches or
+            # exceeds the note's original velocity; after that, the
+            # aftertouch value tracks pressure directly and is allowed
+            # to drop below the original velocity.
             active = {} if p2p_channels is not None else None
 
             def cb(msg):
@@ -2336,7 +2351,8 @@ class MidiPresetService:
                 if active is not None and hasattr(msg, "channel"):
                     ch = msg.channel
                     if msg.type == "note_on" and msg.velocity > 0:
-                        active.setdefault(ch, {})[msg.note] = msg.velocity
+                        active.setdefault(ch, {})[msg.note] = {
+                            "vel": msg.velocity, "unlocked": False}
                     elif (msg.type == "note_off"
                           or (msg.type == "note_on" and msg.velocity == 0)):
                         active.get(ch, {}).pop(msg.note, None)
@@ -2345,18 +2361,32 @@ class MidiPresetService:
                         # Convert channel pressure to per-note polytouch.
                         # On the receiving synth aftertouch overwrites
                         # the velocity CV, so the polytouch value IS the
-                        # new velocity: original velocity pushed upward
-                        # toward 127 by the pressure amount, keeping
-                        # each note's value proportional to how hard
-                        # it was originally struck.
+                        # new velocity.
+                        #
+                        # Threshold behaviour: while pressure stays
+                        # below a note's original velocity the note is
+                        # "locked" — no aftertouch is emitted and the
+                        # velocity CV stands unchanged.  Once pressure
+                        # reaches or exceeds the velocity the note
+                        # "unlocks" and aftertouch tracks pressure
+                        # directly (continuous at the crossover since
+                        # pressure == velocity at that instant).  After
+                        # unlocking, the player can lighten pressure
+                        # below the original velocity — the CV follows.
                         notes = active.get(ch, {})
                         if notes:
                             pressure = msg.value
-                            for note, vel in notes.items():
-                                boosted = vel + (127 - vel) * pressure / 127
-                                msg_queue.put(mido.Message(
-                                    "polytouch", channel=ch, note=note,
-                                    value=min(127, int(round(boosted)))))
+                            for note, info in notes.items():
+                                vel = info["vel"]
+                                if pressure >= vel:
+                                    info["unlocked"] = True
+                                if info["unlocked"]:
+                                    msg_queue.put(mido.Message(
+                                        "polytouch", channel=ch,
+                                        note=note,
+                                        value=max(0, min(
+                                            127, pressure))))
+                                # else: locked — velocity CV untouched
                         return  # suppress original channel aftertouch
                 msg_queue.put(msg)
             return cb
