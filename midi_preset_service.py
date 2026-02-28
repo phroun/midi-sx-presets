@@ -2285,9 +2285,14 @@ class MidiPresetService:
         if (msg.type == "aftertouch"
                 and hasattr(msg, "channel")
                 and msg.channel in self.p2p_channels):
+            _log("P2P", f"BLOCKED raw aftertouch ch{msg.channel+1} "
+                 f"val={msg.value} from {getattr(self, '_msg_source', '?')}")
             return
 
         # All other events (pitch bend, channel aftertouch, etc.) — forward unchanged
+        if msg.type == "aftertouch":
+            _log("P2P", f"FWD raw aftertouch ch{msg.channel+1} "
+                 f"val={msg.value} from {getattr(self, '_msg_source', '?')}")
         self._forward(msg)
 
     def _forward(self, msg):
@@ -2544,6 +2549,8 @@ class MidiPresetService:
                             "last_out": float(msg.velocity),
                             "last_out_t": 0.0,
                             "last_sent": msg.velocity}
+                        _log("P2P", f"ch{ch+1}/n{msg.note} "
+                             f"vel={msg.velocity} TRACK")
                     elif (msg.type == "note_off"
                           or (msg.type == "note_on" and msg.velocity == 0)):
                         if (debounce_s > 0
@@ -2563,6 +2570,9 @@ class MidiPresetService:
                                 return
                         info = active.get(ch, {}).pop(msg.note, None)
                         if info is not None and info["started"]:
+                            _log("P2P", f"ch{ch+1}/n{msg.note} "
+                                 f"vel={info['vel']} OFF "
+                                 f"last_out={info['last_out']:.1f}")
                             # Reset aftertouch on the synth so the CV
                             # doesn't stay stuck at the last value
                             _put(mido.Message(
@@ -2611,12 +2621,15 @@ class MidiPresetService:
                             now = time.monotonic()
                             for note, info in notes.items():
                                 vel = info["vel"]
+                                is_start = False
                                 if not info["started"]:
                                     info["started"] = True
                                     info["start_t"] = now
                                     info["last_out"] = float(vel)
                                     info["last_out_t"] = now
+                                    is_start = True
                                 target = float(pressure)
+                                floor_v = 0.0
                                 if decay_s > 0:
                                     # Floor decays from vel to
                                     # vel*sustain_pct/100 over
@@ -2627,21 +2640,31 @@ class MidiPresetService:
                                         1.0,
                                         elapsed_s / decay_s)
                                     sus = sustain_pct / 100.0
-                                    floor = vel * (
+                                    floor_v = vel * (
                                         1.0 - frac * (1.0 - sus))
-                                    target = max(target, floor)
+                                    target = max(target, floor_v)
+                                pre_slew = target
                                 # Asymmetric slew rate limiter
                                 elapsed_o = (now
                                              - info["last_out_t"])
                                 prev = info["last_out"]
+                                slew_tag = ""
                                 if target > prev and slew_up > 0:
                                     max_up = slew_up * elapsed_o
                                     target = min(target,
                                                  prev + max_up)
+                                    slew_tag = (
+                                        f" slew_up({prev:.1f}"
+                                        f"+{max_up:.2f}"
+                                        f"→{target:.1f})")
                                 elif target < prev and slew_down > 0:
                                     max_dn = slew_down * elapsed_o
                                     target = max(target,
                                                  prev - max_dn)
+                                    slew_tag = (
+                                        f" slew_dn({prev:.1f}"
+                                        f"-{max_dn:.2f}"
+                                        f"→{target:.1f})")
                                 # Always update slew state so
                                 # elapsed_o stays consistent
                                 # across ticks (prevents time
@@ -2652,11 +2675,28 @@ class MidiPresetService:
                                 info["last_out_t"] = now
                                 value = max(0, min(127,
                                                    int(round(target))))
+                                sent = ""
                                 if value != info["last_sent"]:
                                     info["last_sent"] = value
                                     _put(mido.Message(
                                         "polytouch", channel=ch,
                                         note=note, value=value))
+                                    sent = " SEND"
+                                if is_start:
+                                    _log("P2P",
+                                         f"ch{ch+1}/n{note} "
+                                         f"vel={vel} START "
+                                         f"pres={pressure}")
+                                elif sent or (
+                                        int(pre_slew) != value):
+                                    _log("P2P",
+                                         f"ch{ch+1}/n{note} "
+                                         f"p={pressure} "
+                                         f"fl={floor_v:.0f} "
+                                         f"tgt={pre_slew:.0f}"
+                                         f"{slew_tag} "
+                                         f"→{value}"
+                                         f"{sent}")
                         return  # suppress original channel aftertouch
                 _put(msg)
             return cb
