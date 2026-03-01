@@ -2337,7 +2337,7 @@ class MidiPresetService:
         omitted.
 
         Device-level ``velocity_curve``, ``pressure_curve``,
-        ``pressure_to_poly``, ``pressure_decay``,
+        ``pressure_to_poly``, ``velocity_decay``,
         ``pressure_shelf``, ``pressure_shelf_top``,
         ``pressure_slew_up``, ``pressure_slew_down`` and
         ``note_debounce`` act as defaults; ``per_channel`` entries
@@ -2369,7 +2369,7 @@ class MidiPresetService:
         else:
             default_p2p_chs = set()
 
-        default_decay_s = float(inp_cfg.get("pressure_decay", 0)) / 1000.0
+        default_decay_s = float(inp_cfg.get("velocity_decay", 0)) / 1000.0
         # Shelf: absolute MIDI value (0–127) for initial decay target.
         # Decay settles at the shelf until the player's pressure
         # reaches (or exceeds) the shelf level, which "unlocks" the
@@ -2420,8 +2420,8 @@ class MidiPresetService:
                 p2p = ch0 in default_p2p_chs
 
             # Decay
-            if "pressure_decay" in override:
-                decay_s = float(override["pressure_decay"]) / 1000.0
+            if "velocity_decay" in override:
+                decay_s = float(override["velocity_decay"]) / 1000.0
             else:
                 decay_s = default_decay_s
 
@@ -2914,8 +2914,8 @@ class MidiPresetService:
                     if "pressure_to_poly" in over:
                         tags.append(
                             "p2p" if over["pressure_to_poly"] else "!p2p")
-                    if "pressure_decay" in over:
-                        tags.append(f"decay={over['pressure_decay']}ms")
+                    if "velocity_decay" in over:
+                        tags.append(f"decay={over['velocity_decay']}ms")
                     if "pressure_curve" in over:
                         opc = over["pressure_curve"]
                         tags.append(
