@@ -47,15 +47,15 @@ routing:
       velocity_curve:
         floor: 1     # nothing goes below this
         low: 1       # input 36 → output 18
-        high: 99      # input 99 → output 99
-        curve: 0.5    # shape of the scaling between low and high
+        cap: 99       # hard ceiling — max output value
+        curve: 0.5    # shape of the scaling between low and cap
     - device: "Launchpad Pro MK3 LPProMK3 DIN"
       channels: [1,2,4,10]
       velocity_curve:
         floor: 18     # nothing goes below this
         low: 36       # input 36 → output 18
-        high: 99      # input 99 → output 99
-        curve: 1.0    # shape of the scaling between low and high
+        cap: 99       # hard ceiling — max output value
+        curve: 1.0    # shape of the scaling between low and cap
 #    - device: "IAC Driver Bus 1"
 #      channels: [13]
   iac_input: "IAC Driver Bus 4 - Output"

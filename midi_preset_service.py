@@ -2303,25 +2303,24 @@ class MidiPresetService:
     # -- Extra input helpers ---------------------------------------------------
 
     @staticmethod
-    def _build_velocity_table(floor_vel, low_in, high_in, curve_exp):
+    def _build_velocity_table(floor_vel, low_in, cap, curve_exp):
         """Build a 128-entry velocity lookup table.
 
         - Index 0 stays 0 (velocity 0 = note-off semantics).
         - [1, low_in)  → floor_vel  (clamp quiet playing to the floor).
-        - [low_in, high_in] → [floor_vel, high_in] via power curve.
-        - (high_in, 127] → high_in  (hard ceiling).
+        - [low_in, cap] → [floor_vel, cap] via power curve.
+        - (cap, 127]    → cap  (hard ceiling).
         """
         table = [0] * 128
         for v in range(1, 128):
             if v <= low_in:
                 table[v] = floor_vel
-            elif v <= high_in:
-                t = (v - low_in) / (high_in - low_in)
-                out = floor_vel + (high_in - floor_vel) * (t ** curve_exp)
-                table[v] = max(floor_vel, min(high_in, int(round(out))))
+            elif v <= cap:
+                t = (v - low_in) / (cap - low_in)
+                out = floor_vel + (cap - floor_vel) * (t ** curve_exp)
+                table[v] = max(floor_vel, min(cap, int(round(out))))
             else:
-                # Hard ceiling — anything above high_in clamps
-                table[v] = high_in
+                table[v] = cap
         return table
 
     @staticmethod
@@ -2353,7 +2352,7 @@ class MidiPresetService:
             return build_vt(
                 int(vc.get("floor", 1)),
                 int(vc.get("low", 1)),
-                int(vc.get("high", 127)),
+                int(vc.get("cap", vc.get("high", 127))),
                 float(vc.get("curve", 1.0)))
 
         # --- device-level defaults ---
@@ -2562,16 +2561,16 @@ class MidiPresetService:
                 shelf_top = copts.get("shelf_top", 0)
                 if (shelf_top > shelf > 0
                         and pressure >= shelf):
-                    high_out = (ptable[127]
-                                if ptable is not None else 127)
+                    cap_out = (ptable[127]
+                               if ptable is not None else 127)
                     if pressure < shelf_top:
                         pressure = shelf
-                    elif shelf_top < high_out:
-                        # Rescale [shelf_top, high] → [shelf, high]
+                    elif shelf_top < cap_out:
+                        # Rescale [shelf_top, cap] → [shelf, cap]
                         t = ((pressure - shelf_top)
-                             / (high_out - shelf_top))
+                             / (cap_out - shelf_top))
                         pressure = int(round(
-                            shelf + (high_out - shelf) * t))
+                            shelf + (cap_out - shelf) * t))
 
                 target = float(pressure)
                 floor_v = 0.0
@@ -2811,10 +2810,11 @@ class MidiPresetService:
             # Device-level velocity curve (shown only when no per-channel)
             vc = inp_cfg.get("velocity_curve")
             if vc and not per_ch_yaml:
+                vc_cap = vc.get("cap", vc.get("high", 127))
                 extras.append(
                     f"vel_curve(floor={vc.get('floor', 1)} "
                     f"low={vc.get('low', 1)} "
-                    f"high={vc.get('high', 127)} "
+                    f"cap={vc_cap} "
                     f"curve={vc.get('curve', 1.0)})")
             # Pressure-to-poly summary
             p2p_chs = sorted(ch0 + 1 for ch0, o in ch_opts.items()
@@ -2881,8 +2881,9 @@ class MidiPresetService:
                 pc = inp_cfg.get("pressure_curve")
                 pc_tag = ""
                 if pc:
+                    pc_cap = pc.get("cap", pc.get("high", 127))
                     pc_tag = (f" pcurve(fl={pc.get('floor', 1)}"
-                              f" hi={pc.get('high', 127)}"
+                              f" cap={pc_cap}"
                               f" c={pc.get('curve', 1.0)})")
                 extras.append(f"pressure_to_poly({p2p_label}"
                               f"{decay_tag}"
