@@ -278,7 +278,7 @@ cc_mappings:
     - {mask: 0x008C, compare: 0x0088, type: relative, cc: 103, default: 0, channel: 11, name: "Perform to Loop B"}  # Vertical Shift + "B"
     - {mask: 0x0060, compare: 0x0040, type: relative, cc: 103, default: 0, channel: 11, name: "Perform to Loop B"}  # Vertical Shift + "B"
     # Wah Amount:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, parameter: wah_depth}  # Poly, BlueShift
+    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, auto: wah_depth}  # Poly, BlueShift
     # Filter Release:
     - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 72, channel: 14, name: "F-Release"}  # Poly, GreenShift = Envelopes
 
@@ -387,7 +387,6 @@ note_mappings:
     from_channel: 13
     channel: 10
 
-note_mappings:
   - low: 0
     high: 127
     from_channel: 1
@@ -426,7 +425,7 @@ note_mappings:
     compare: 0x0000
     from_channel: 4
     polyphony_instance: chords
-    polyphonic_distribution: [2, 4, 7, 8]
+    polyphonic_distribution: [2, 4, 6, 7]
     allocation_strategy: round_robin
     after_poly_to_chan: true
     channel: 2
@@ -449,8 +448,7 @@ note_mappings:
     from_channel: 4
     polyphony_instance: chords
     allocation_strategy: round_robin
-    polyphonic_distribution: [2, 4, 7, 8]
+    polyphonic_distribution: [2, 4, 6, 7]
     after_poly_to_chan: true
     channel: 2
     name: "Poly4"
-

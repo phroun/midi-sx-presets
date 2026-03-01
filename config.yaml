@@ -38,7 +38,9 @@ routing:
     - device: "UMC404HD 192k"
       channels: [15]
     - device: "Launchpad Pro MK3 LPProMK3 MIDI"
+      mapping: "pads"
       channels: [1,2,4,10]
+      velocity_to_pressure: true
       note_debounce: 30        # ms — minimum note lifetime before release
       pressure_to_poly: [2,4]
       pressure_slew_up: 4000   # steps/sec — upward rate limit (0 = unlimited)
@@ -58,7 +60,9 @@ routing:
         cap: 127
         curve: 1.0
     - device: "Launchpad Pro MK3 LPProMK3 DIN"
+      mapping: "keys"
       channels: [1,2,4,10]
+      velocity_to_pressure: true
       velocity_decay: 250
       velocity_curve:
         floor: 18     # nothing goes below this
