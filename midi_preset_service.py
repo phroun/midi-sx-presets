@@ -2477,6 +2477,7 @@ class MidiPresetService:
 
         # Quick lookups for the callback
         any_p2p = any(o["p2p"] for o in ch_opts.values())
+        any_debounce = any(o["debounce_s"] > 0 for o in ch_opts.values())
 
         # Register P2P channels so the main handler can suppress raw
         # channel aftertouch that leaks through the primary input
@@ -2485,7 +2486,8 @@ class MidiPresetService:
         self.p2p_channels.update(
             ch0 for ch0, o in ch_opts.items() if o["p2p"])
 
-        def make_cb(ch_filter, channel_opts, has_p2p, source):
+        def make_cb(ch_filter, channel_opts, has_p2p,
+                    has_debounce, source):
             # Per-device note tracker:
             #   active[ch][note] = {"vel", "started", "start_t",
             #                       "last_out", "last_out_t",
@@ -2504,9 +2506,11 @@ class MidiPresetService:
             # arrives before the timer expires, the pending off is
             # cancelled (no audible gap).  Expired entries are flushed
             # on every callback invocation.
-            active = {} if has_p2p else None
-            pending_off = {} if has_p2p else None
-            p2p_lock = threading.Lock() if has_p2p else None
+            needs_tracking = has_p2p or has_debounce
+            active = {} if needs_tracking else None
+            pending_off = {} if needs_tracking else None
+            p2p_lock = (threading.Lock()
+                        if needs_tracking else None)
 
             def _put(m):
                 msg_queue.put((source, m))
@@ -2521,7 +2525,10 @@ class MidiPresetService:
                         pend = pnotes[pn]
                         if now >= pend["expire_t"]:
                             info = active.get(pch, {}).pop(pn, None)
-                            if info is not None and info["started"]:
+                            pch_opts = channel_opts.get(pch, {})
+                            if (info is not None
+                                    and info["started"]
+                                    and pch_opts.get("p2p")):
                                 _put(mido.Message(
                                     "polytouch", channel=pch,
                                     note=pn, value=0))
@@ -2693,7 +2700,7 @@ class MidiPresetService:
                 if vtable is not None and hasattr(msg, "velocity"):
                     msg = msg.copy(velocity=vtable[msg.velocity])
 
-                # Track notes for pressure-to-poly conversion
+                # Track notes for debounce + pressure-to-poly
                 if active is not None and ch is not None:
                     with p2p_lock:
                         _flush_pending(time.monotonic())
@@ -2713,8 +2720,10 @@ class MidiPresetService:
                                 "last_sent": msg.velocity,
                                 "last_pressure": 0,
                                 "shelf_unlocked": False}
-                            _log("P2P", f"ch{ch+1}/n{msg.note} "
-                                 f"vel={msg.velocity} TRACK")
+                            if copts.get("p2p"):
+                                _log("P2P",
+                                     f"ch{ch+1}/n{msg.note} "
+                                     f"vel={msg.velocity} TRACK")
                         elif (msg.type == "note_off"
                               or (msg.type == "note_on"
                                   and msg.velocity == 0)):
@@ -2736,7 +2745,8 @@ class MidiPresetService:
                             info = (active.get(ch, {})
                                     .pop(msg.note, None))
                             if (info is not None
-                                    and info["started"]):
+                                    and info["started"]
+                                    and copts.get("p2p")):
                                 _log("P2P",
                                      f"ch{ch+1}/n{msg.note} "
                                      f"vel={info['vel']} OFF "
@@ -2781,7 +2791,8 @@ class MidiPresetService:
             # can block indefinitely when a USB MIDI device is in
             # a bad state (especially multi-port devices like the
             # Launchpad Pro MK3).
-            cb = make_cb(ch_set, ch_opts, any_p2p, device)
+            cb = make_cb(ch_set, ch_opts, any_p2p,
+                         any_debounce, device)
             _open_result = [None, None]  # [port, exception]
 
             def _open_port():
