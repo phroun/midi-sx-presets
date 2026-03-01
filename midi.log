@@ -1,0 +1,801 @@
+04:08:19.210 OUT control_change ch2 cc=1 val=15
+04:08:19.210 OUT control_change ch2 cc=3 val=0
+04:08:19.210 OUT control_change ch2 cc=7 val=127
+04:08:19.210 OUT control_change ch2 cc=9 val=0
+04:08:19.210 OUT control_change ch2 cc=10 val=63
+04:08:19.210 OUT control_change ch2 cc=11 val=0
+04:08:19.210 OUT control_change ch2 cc=72 val=127
+04:08:19.210 OUT control_change ch2 cc=73 val=127
+04:08:19.210 OUT control_change ch2 cc=74 val=63
+04:08:19.210 OUT control_change ch2 cc=75 val=127
+04:08:19.210 OUT control_change ch2 cc=76 val=82
+04:08:19.210 OUT control_change ch2 cc=77 val=7
+04:08:19.210 OUT control_change ch2 cc=78 val=0
+04:08:19.210 OUT control_change ch2 cc=79 val=24
+04:08:19.211 OUT control_change ch2 cc=80 val=0
+04:08:19.211 OUT control_change ch2 cc=86 val=103
+04:08:19.211 OUT control_change ch2 cc=87 val=127
+04:08:19.211 OUT control_change ch2 cc=88 val=75
+04:08:19.211 OUT control_change ch2 cc=89 val=0
+04:08:19.211 OUT control_change ch2 cc=90 val=0
+04:08:19.211 OUT control_change ch2 cc=91 val=0
+04:08:19.211 OUT control_change ch2 cc=92 val=0
+04:08:19.211 OUT control_change ch2 cc=93 val=0
+04:08:19.211 OUT control_change ch2 cc=94 val=8
+04:08:19.211 OUT control_change ch2 cc=95 val=0
+04:08:19.211 OUT control_change ch2 cc=102 val=0
+04:08:19.211 OUT control_change ch2 cc=103 val=0
+04:08:19.211 OUT control_change ch11 cc=3 val=127
+04:08:19.212 OUT control_change ch11 cc=7 val=0
+04:08:19.212 OUT control_change ch11 cc=9 val=0
+04:08:19.212 OUT control_change ch11 cc=10 val=63
+04:08:19.212 OUT control_change ch11 cc=11 val=0
+04:08:19.212 OUT control_change ch11 cc=90 val=0
+04:08:19.212 OUT control_change ch11 cc=91 val=0
+04:08:19.212 OUT control_change ch11 cc=102 val=127
+04:08:19.212 OUT control_change ch11 cc=103 val=0
+04:08:19.212 OUT control_change ch1 cc=3 val=0
+04:08:19.212 OUT control_change ch1 cc=7 val=0
+04:08:19.212 OUT control_change ch1 cc=9 val=0
+04:08:19.212 OUT control_change ch1 cc=10 val=127
+04:08:19.212 OUT control_change ch1 cc=11 val=0
+04:08:19.212 OUT control_change ch1 cc=90 val=0
+04:08:19.212 OUT control_change ch1 cc=91 val=0
+04:08:19.212 OUT control_change ch1 cc=102 val=0
+04:08:19.212 OUT control_change ch1 cc=103 val=0
+04:08:19.212 OUT control_change ch5 cc=3 val=115
+04:08:19.212 OUT control_change ch5 cc=7 val=0
+04:08:19.212 OUT control_change ch5 cc=9 val=0
+04:08:19.212 OUT control_change ch5 cc=10 val=127
+04:08:19.212 OUT control_change ch5 cc=11 val=0
+04:08:19.212 OUT control_change ch5 cc=90 val=0
+04:08:19.213 OUT control_change ch5 cc=91 val=0
+04:08:19.213 OUT control_change ch5 cc=102 val=0
+04:08:19.213 OUT control_change ch5 cc=103 val=0
+04:08:19.213 OUT control_change ch10 cc=69 val=0
+04:08:19.213 OUT control_change ch3 cc=3 val=0
+04:08:19.213 OUT control_change ch3 cc=7 val=0
+04:08:19.213 OUT control_change ch3 cc=9 val=0
+04:08:19.213 OUT control_change ch3 cc=10 val=127
+04:08:19.213 OUT control_change ch3 cc=11 val=0
+04:08:19.213 OUT control_change ch3 cc=90 val=127
+04:08:19.213 OUT control_change ch3 cc=91 val=0
+04:08:19.213 OUT control_change ch3 cc=102 val=0
+04:08:19.213 OUT control_change ch3 cc=103 val=0
+04:08:19.213 OUT control_change ch4 cc=3 val=0
+04:08:19.213 OUT control_change ch4 cc=7 val=0
+04:08:19.214 OUT control_change ch4 cc=9 val=0
+04:08:19.214 OUT control_change ch4 cc=10 val=127
+04:08:19.214 OUT control_change ch4 cc=11 val=0
+04:08:19.214 OUT control_change ch4 cc=90 val=0
+04:08:19.214 OUT control_change ch4 cc=91 val=0
+04:08:19.214 OUT control_change ch4 cc=102 val=0
+04:08:19.214 OUT control_change ch4 cc=103 val=0
+04:08:19.214 OUT control_change ch14 cc=1 val=127
+04:08:19.214 OUT control_change ch14 cc=2 val=127
+04:08:19.214 OUT control_change ch14 cc=3 val=127
+04:08:19.214 OUT control_change ch14 cc=4 val=127
+04:08:19.214 OUT control_change ch14 cc=5 val=127
+04:08:19.214 OUT control_change ch14 cc=6 val=0
+04:08:19.214 OUT control_change ch14 cc=9 val=0
+04:08:19.214 OUT control_change ch14 cc=10 val=0
+04:08:19.214 OUT control_change ch14 cc=11 val=0
+04:08:19.214 OUT control_change ch14 cc=12 val=0
+04:08:19.215 OUT control_change ch14 cc=13 val=0
+04:08:19.215 OUT control_change ch14 cc=14 val=0
+04:08:19.215 OUT control_change ch14 cc=15 val=0
+04:08:19.215 OUT control_change ch14 cc=71 val=63
+04:08:19.215 OUT control_change ch1 cc=1 val=0
+04:08:19.215 OUT control_change ch3 cc=1 val=0
+04:08:19.215 OUT control_change ch4 cc=1 val=127
+04:08:19.215 OUT control_change ch5 cc=1 val=0
+04:08:19.215 OUT control_change ch6 cc=1 val=0
+04:08:19.215 OUT control_change ch7 cc=1 val=0
+04:08:19.215 OUT control_change ch8 cc=1 val=0
+04:08:19.215 OUT control_change ch9 cc=1 val=0
+04:08:19.215 OUT control_change ch10 cc=1 val=0
+04:08:19.215 OUT control_change ch11 cc=1 val=0
+04:08:19.215 OUT control_change ch12 cc=1 val=0
+04:08:19.215 OUT control_change ch13 cc=1 val=0
+04:08:19.215 OUT control_change ch15 cc=1 val=0
+04:08:19.215 OUT control_change ch16 cc=1 val=0
+04:08:19.215 OUT control_change ch14 cc=8 val=0
+04:08:19.215 OUT control_change ch13 cc=46 val=127
+04:08:19.215 OUT control_change ch14 cc=72 val=9
+04:08:19.215 OUT control_change ch15 cc=0 val=0
+04:08:19.216 OUT control_change ch14 cc=93 val=127
+04:08:19.216 OUT control_change ch14 cc=7 val=127
+04:08:19.266 OUT control_change ch14 cc=7 val=0
+04:08:19.317 OUT control_change ch14 cc=8 val=127
+04:08:19.368 OUT control_change ch14 cc=8 val=0
+04:08:19.368 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.368 OUT clock time=0
+04:08:19.368 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.368 OUT clock time=0
+04:08:19.368 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.368 OUT clock time=0
+04:08:19.368 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.368 OUT clock time=0
+04:08:19.369 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.369 OUT clock time=0
+04:08:19.369 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.369 OUT clock time=0
+04:08:19.369 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.369 OUT clock time=0
+04:08:19.369 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.369 OUT clock time=0
+04:08:19.389 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.389 OUT clock time=0
+04:08:19.410 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.410 OUT clock time=0
+04:08:19.431 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.431 OUT clock time=0
+04:08:19.451 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.451 OUT clock time=0
+04:08:19.472 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.472 OUT clock time=0
+04:08:19.493 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.493 OUT clock time=0
+04:08:19.514 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.514 OUT clock time=0
+04:08:19.534 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.535 OUT clock time=0
+04:08:19.555 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.556 OUT clock time=0
+04:08:19.575 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.576 OUT clock time=0
+04:08:19.596 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.596 OUT clock time=0
+04:08:19.617 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.617 OUT clock time=0
+04:08:19.638 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.638 OUT clock time=0
+04:08:19.659 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.659 OUT clock time=0
+04:08:19.680 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.680 OUT clock time=0
+04:08:19.700 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.700 OUT clock time=0
+04:08:19.721 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.721 OUT clock time=0
+04:08:19.742 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.742 OUT clock time=0
+04:08:19.763 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.763 OUT clock time=0
+04:08:19.784 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.784 OUT clock time=0
+04:08:19.805 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.805 OUT clock time=0
+04:08:19.825 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.825 OUT clock time=0
+04:08:19.846 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.847 OUT clock time=0
+04:08:19.867 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.867 OUT clock time=0
+04:08:19.888 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.888 OUT clock time=0
+04:08:19.909 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.909 OUT clock time=0
+04:08:19.929 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.930 OUT clock time=0
+04:08:19.949 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.950 OUT clock time=0
+04:08:19.970 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.970 OUT clock time=0
+04:08:19.991 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:19.992 OUT clock time=0
+04:08:20.012 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.012 OUT clock time=0
+04:08:20.033 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.033 OUT clock time=0
+04:08:20.054 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.054 OUT clock time=0
+04:08:20.074 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.074 OUT clock time=0
+04:08:20.095 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.095 OUT clock time=0
+04:08:20.116 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.116 OUT clock time=0
+04:08:20.137 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.137 OUT clock time=0
+04:08:20.158 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.158 OUT clock time=0
+04:08:20.179 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.179 OUT clock time=0
+04:08:20.199 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.199 OUT clock time=0
+04:08:20.220 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.220 OUT clock time=0
+04:08:20.241 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.241 OUT clock time=0
+04:08:20.262 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.262 OUT clock time=0
+04:08:20.283 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.283 OUT clock time=0
+04:08:20.304 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.304 OUT clock time=0
+04:08:20.323 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.324 OUT clock time=0
+04:08:20.344 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.345 OUT clock time=0
+04:08:20.365 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.366 OUT clock time=0
+04:08:20.386 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.386 OUT clock time=0
+04:08:20.407 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.407 OUT clock time=0
+04:08:20.428 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.428 OUT clock time=0
+04:08:20.448 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.448 OUT clock time=0
+04:08:20.469 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.469 OUT clock time=0
+04:08:20.490 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.490 OUT clock time=0
+04:08:20.511 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.511 OUT clock time=0
+04:08:20.532 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.532 OUT clock time=0
+04:08:20.553 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.553 OUT clock time=0
+04:08:20.573 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.573 OUT clock time=0
+04:08:20.594 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.594 OUT clock time=0
+04:08:20.615 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.615 OUT clock time=0
+04:08:20.636 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.636 OUT clock time=0
+04:08:20.657 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.657 OUT clock time=0
+04:08:20.678 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.678 OUT clock time=0
+04:08:20.698 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.698 OUT clock time=0
+04:08:20.718 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.719 OUT clock time=0
+04:08:20.739 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.740 OUT clock time=0
+04:08:20.760 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.760 OUT clock time=0
+04:08:20.781 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.782 OUT clock time=0
+04:08:20.802 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.802 OUT clock time=0
+04:08:20.822 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.822 OUT clock time=0
+04:08:20.843 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.843 OUT clock time=0
+04:08:20.864 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.864 OUT clock time=0
+04:08:20.885 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.885 OUT clock time=0
+04:08:20.906 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.906 OUT clock time=0
+04:08:20.927 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.927 OUT clock time=0
+04:08:20.947 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.947 OUT clock time=0
+04:08:20.968 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.968 OUT clock time=0
+04:08:20.989 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:20.989 OUT clock time=0
+04:08:21.010 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.010 OUT clock time=0
+04:08:21.031 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.031 OUT clock time=0
+04:08:21.052 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.052 OUT clock time=0
+04:08:21.072 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.072 OUT clock time=0
+04:08:21.093 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.093 OUT clock time=0
+04:08:21.113 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.114 OUT clock time=0
+04:08:21.134 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.135 OUT clock time=0
+04:08:21.155 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.156 OUT clock time=0
+04:08:21.176 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.177 OUT clock time=0
+04:08:21.196 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.196 OUT clock time=0
+04:08:21.217 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.217 OUT clock time=0
+04:08:21.238 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.238 OUT clock time=0
+04:08:21.259 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.259 OUT clock time=0
+04:08:21.280 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.280 OUT clock time=0
+04:08:21.301 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.301 OUT clock time=0
+04:08:21.321 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.321 OUT clock time=0
+04:08:21.342 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.342 OUT clock time=0
+04:08:21.363 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.363 OUT clock time=0
+04:08:21.384 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.384 OUT clock time=0
+04:08:21.405 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.405 OUT clock time=0
+04:08:21.426 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.426 OUT clock time=0
+04:08:21.446 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.446 OUT clock time=0
+04:08:21.467 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.467 OUT clock time=0
+04:08:21.488 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.488 OUT clock time=0
+04:08:21.508 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.509 OUT clock time=0
+04:08:21.529 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.530 OUT clock time=0
+04:08:21.550 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.551 OUT clock time=0
+04:08:21.570 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.571 OUT clock time=0
+04:08:21.591 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.591 OUT clock time=0
+04:08:21.601 IN  [Launchpad Pro MK3 LPProMK3 MIDI] note_on ch2 note=36 vel=99
+04:08:21.601 OUT aftertouch ch2 pressure=99
+04:08:21.601 OUT note_on ch2 note=36 vel=99
+04:08:21.612 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.612 OUT clock time=0
+04:08:21.614 IN  [Launchpad Pro MK3 LPProMK3 MIDI] polytouch ch2 note=36 pressure=95
+04:08:21.614 OUT aftertouch ch2 pressure=95
+04:08:21.629 IN  [Launchpad Pro MK3 LPProMK3 MIDI] polytouch ch2 note=36 pressure=90
+04:08:21.630 OUT aftertouch ch2 pressure=90
+04:08:21.633 IN  [Launchpad Pro MK3 LPProMK3 MIDI] polytouch ch2 note=36 pressure=88
+04:08:21.633 OUT aftertouch ch2 pressure=88
+04:08:21.633 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.633 OUT clock time=0
+04:08:21.646 IN  [Launchpad Pro MK3 LPProMK3 MIDI] polytouch ch2 note=36 pressure=83
+04:08:21.646 OUT aftertouch ch2 pressure=83
+04:08:21.653 IN  [Launchpad Pro MK3 LPProMK3 MIDI] polytouch ch2 note=36 pressure=80
+04:08:21.653 OUT aftertouch ch2 pressure=80
+04:08:21.654 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.654 OUT clock time=0
+04:08:21.664 IN  [Launchpad Pro MK3 LPProMK3 MIDI] polytouch ch2 note=36 pressure=76
+04:08:21.664 OUT aftertouch ch2 pressure=76
+04:08:21.673 IN  [Launchpad Pro MK3 LPProMK3 MIDI] polytouch ch2 note=36 pressure=73
+04:08:21.673 OUT aftertouch ch2 pressure=73
+04:08:21.675 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.675 OUT clock time=0
+04:08:21.679 IN  [Launchpad Pro MK3 LPProMK3 MIDI] polytouch ch2 note=36 pressure=71
+04:08:21.679 OUT aftertouch ch2 pressure=71
+04:08:21.695 IN  [Launchpad Pro MK3 LPProMK3 MIDI] polytouch ch2 note=36 pressure=65
+04:08:21.695 OUT aftertouch ch2 pressure=65
+04:08:21.696 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.696 OUT clock time=0
+04:08:21.713 IN  [Launchpad Pro MK3 LPProMK3 MIDI] polytouch ch2 note=36 pressure=59
+04:08:21.713 OUT aftertouch ch2 pressure=59
+04:08:21.716 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.716 OUT clock time=0
+04:08:21.725 IN  [Launchpad Pro MK3 LPProMK3 MIDI] note_off ch2 note=36 vel=0
+04:08:21.725 OUT note_off ch2 note=36 vel=0
+04:08:21.737 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.737 OUT clock time=0
+04:08:21.758 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.758 OUT clock time=0
+04:08:21.779 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.779 OUT clock time=0
+04:08:21.800 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.800 OUT clock time=0
+04:08:21.820 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.820 OUT clock time=0
+04:08:21.841 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.841 OUT clock time=0
+04:08:21.862 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.862 OUT clock time=0
+04:08:21.883 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.883 OUT clock time=0
+04:08:21.903 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.904 OUT clock time=0
+04:08:21.924 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.925 OUT clock time=0
+04:08:21.944 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.944 OUT clock time=0
+04:08:21.965 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.966 OUT clock time=0
+04:08:21.986 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:21.986 OUT clock time=0
+04:08:22.007 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.007 OUT clock time=0
+04:08:22.028 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.028 OUT clock time=0
+04:08:22.049 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.049 OUT clock time=0
+04:08:22.069 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.069 OUT clock time=0
+04:08:22.090 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.090 OUT clock time=0
+04:08:22.111 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.111 OUT clock time=0
+04:08:22.132 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.132 OUT clock time=0
+04:08:22.153 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.153 OUT clock time=0
+04:08:22.174 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.174 OUT clock time=0
+04:08:22.194 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.194 OUT clock time=0
+04:08:22.215 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.215 OUT clock time=0
+04:08:22.236 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.236 OUT clock time=0
+04:08:22.257 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.257 OUT clock time=0
+04:08:22.278 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.278 OUT clock time=0
+04:08:22.299 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.299 OUT clock time=0
+04:08:22.318 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.319 OUT clock time=0
+04:08:22.339 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.340 OUT clock time=0
+04:08:22.360 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.361 OUT clock time=0
+04:08:22.381 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.381 OUT clock time=0
+04:08:22.402 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.402 OUT clock time=0
+04:08:22.423 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.423 OUT clock time=0
+04:08:22.443 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.443 OUT clock time=0
+04:08:22.464 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.464 OUT clock time=0
+04:08:22.485 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.485 OUT clock time=0
+04:08:22.506 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.506 OUT clock time=0
+04:08:22.527 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.527 OUT clock time=0
+04:08:22.548 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.548 OUT clock time=0
+04:08:22.568 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.568 OUT clock time=0
+04:08:22.589 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.589 OUT clock time=0
+04:08:22.610 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.610 OUT clock time=0
+04:08:22.631 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.631 OUT clock time=0
+04:08:22.652 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.652 OUT clock time=0
+04:08:22.673 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.673 OUT clock time=0
+04:08:22.693 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.693 OUT clock time=0
+04:08:22.713 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.714 OUT clock time=0
+04:08:22.734 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.735 OUT clock time=0
+04:08:22.755 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.755 OUT clock time=0
+04:08:22.776 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.777 OUT clock time=0
+04:08:22.797 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.797 OUT clock time=0
+04:08:22.817 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.817 OUT clock time=0
+04:08:22.838 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.838 OUT clock time=0
+04:08:22.859 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.860 OUT clock time=0
+04:08:22.880 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.880 OUT clock time=0
+04:08:22.901 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.901 OUT clock time=0
+04:08:22.922 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.922 OUT clock time=0
+04:08:22.942 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.942 OUT clock time=0
+04:08:22.963 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.963 OUT clock time=0
+04:08:22.984 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:22.984 OUT clock time=0
+04:08:23.005 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.005 OUT clock time=0
+04:08:23.026 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.026 OUT clock time=0
+04:08:23.047 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.047 OUT clock time=0
+04:08:23.067 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.067 OUT clock time=0
+04:08:23.088 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.088 OUT clock time=0
+04:08:23.108 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.109 OUT clock time=0
+04:08:23.129 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.130 OUT clock time=0
+04:08:23.150 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.151 OUT clock time=0
+04:08:23.171 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.171 OUT clock time=0
+04:08:23.191 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.191 OUT clock time=0
+04:08:23.212 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.212 OUT clock time=0
+04:08:23.233 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.233 OUT clock time=0
+04:08:23.254 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.254 OUT clock time=0
+04:08:23.275 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.275 OUT clock time=0
+04:08:23.296 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.296 OUT clock time=0
+04:08:23.316 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.316 OUT clock time=0
+04:08:23.337 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.337 OUT clock time=0
+04:08:23.358 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.358 OUT clock time=0
+04:08:23.379 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.379 OUT clock time=0
+04:08:23.400 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.400 OUT clock time=0
+04:08:23.421 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.421 OUT clock time=0
+04:08:23.441 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.441 OUT clock time=0
+04:08:23.462 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.462 OUT clock time=0
+04:08:23.483 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.483 OUT clock time=0
+04:08:23.503 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.504 OUT clock time=0
+04:08:23.524 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.525 OUT clock time=0
+04:08:23.545 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.545 OUT clock time=0
+04:08:23.565 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.565 OUT clock time=0
+04:08:23.586 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.586 OUT clock time=0
+04:08:23.607 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.607 OUT clock time=0
+04:08:23.628 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.628 OUT clock time=0
+04:08:23.649 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.649 OUT clock time=0
+04:08:23.670 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.670 OUT clock time=0
+04:08:23.690 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.690 OUT clock time=0
+04:08:23.711 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.711 OUT clock time=0
+04:08:23.732 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.732 OUT clock time=0
+04:08:23.753 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.753 OUT clock time=0
+04:08:23.774 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.774 OUT clock time=0
+04:08:23.795 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.795 OUT clock time=0
+04:08:23.815 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.815 OUT clock time=0
+04:08:23.836 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.836 OUT clock time=0
+04:08:23.857 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.857 OUT clock time=0
+04:08:23.877 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.878 OUT clock time=0
+04:08:23.898 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.899 OUT clock time=0
+04:08:23.920 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.920 OUT clock time=0
+04:08:23.939 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.940 OUT clock time=0
+04:08:23.960 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.961 OUT clock time=0
+04:08:23.981 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:23.981 OUT clock time=0
+04:08:24.002 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.002 OUT clock time=0
+04:08:24.023 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.023 OUT clock time=0
+04:08:24.044 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.044 OUT clock time=0
+04:08:24.064 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.064 OUT clock time=0
+04:08:24.085 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.085 OUT clock time=0
+04:08:24.106 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.106 OUT clock time=0
+04:08:24.127 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.127 OUT clock time=0
+04:08:24.148 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.148 OUT clock time=0
+04:08:24.169 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.169 OUT clock time=0
+04:08:24.189 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.189 OUT clock time=0
+04:08:24.210 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.210 OUT clock time=0
+04:08:24.231 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.231 OUT clock time=0
+04:08:24.252 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.252 OUT clock time=0
+04:08:24.272 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.273 OUT clock time=0
+04:08:24.294 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.294 OUT clock time=0
+04:08:24.313 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.314 OUT clock time=0
+04:08:24.334 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.335 OUT clock time=0
+04:08:24.355 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.355 OUT clock time=0
+04:08:24.376 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.376 OUT clock time=0
+04:08:24.397 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.398 OUT clock time=0
+04:08:24.418 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.418 OUT clock time=0
+04:08:24.438 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.438 OUT clock time=0
+04:08:24.459 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.459 OUT clock time=0
+04:08:24.480 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.480 OUT clock time=0
+04:08:24.501 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.501 OUT clock time=0
+04:08:24.522 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.522 OUT clock time=0
+04:08:24.543 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.543 OUT clock time=0
+04:08:24.563 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.563 OUT clock time=0
+04:08:24.584 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.584 OUT clock time=0
+04:08:24.605 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.605 OUT clock time=0
+04:08:24.626 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.626 OUT clock time=0
+04:08:24.647 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.647 OUT clock time=0
+04:08:24.668 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.668 OUT clock time=0
+04:08:24.687 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.688 OUT clock time=0
+04:08:24.708 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.709 OUT clock time=0
+04:08:24.729 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.730 OUT clock time=0
+04:08:24.750 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.751 OUT clock time=0
+04:08:24.771 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.771 OUT clock time=0
+04:08:24.792 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.792 OUT clock time=0
+04:08:24.812 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.812 OUT clock time=0
+04:08:24.833 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.833 OUT clock time=0
+04:08:24.854 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.854 OUT clock time=0
+04:08:24.875 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.875 OUT clock time=0
+04:08:24.896 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.896 OUT clock time=0
+04:08:24.917 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.917 OUT clock time=0
+04:08:24.937 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.937 OUT clock time=0
+04:08:24.958 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.958 OUT clock time=0
+04:08:24.979 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:24.979 OUT clock time=0
+04:08:25.000 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.000 OUT clock time=0
+04:08:25.021 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.021 OUT clock time=0
+04:08:25.042 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.042 OUT clock time=0
+04:08:25.062 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.062 OUT clock time=0
+04:08:25.083 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.083 OUT clock time=0
+04:08:25.103 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.104 OUT clock time=0
+04:08:25.125 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.125 OUT clock time=0
+04:08:25.145 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.146 OUT clock time=0
+04:08:25.166 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.167 OUT clock time=0
+04:08:25.186 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.186 OUT clock time=0
+04:08:25.207 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.207 OUT clock time=0
+04:08:25.228 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.228 OUT clock time=0
+04:08:25.249 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.249 OUT clock time=0
+04:08:25.270 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.270 OUT clock time=0
+04:08:25.291 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.291 OUT clock time=0
+04:08:25.311 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.311 OUT clock time=0
+04:08:25.332 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.332 OUT clock time=0
+04:08:25.353 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.353 OUT clock time=0
+04:08:25.374 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.374 OUT clock time=0
+04:08:25.395 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.395 OUT clock time=0
+04:08:25.416 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.416 OUT clock time=0
+04:08:25.436 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.436 OUT clock time=0
+04:08:25.457 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.457 OUT clock time=0
+04:08:25.478 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.478 OUT clock time=0
+04:08:25.498 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.499 OUT clock time=0
+04:08:25.519 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.520 OUT clock time=0
+04:08:25.540 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.540 OUT clock time=0
+04:08:25.560 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.560 OUT clock time=0
+04:08:25.581 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.581 OUT clock time=0
+04:08:25.602 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.602 OUT clock time=0
+04:08:25.623 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.623 OUT clock time=0
+04:08:25.644 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.644 OUT clock time=0
+04:08:25.665 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.665 OUT clock time=0
+04:08:25.685 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.685 OUT clock time=0
+04:08:25.706 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.706 OUT clock time=0
+04:08:25.727 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.727 OUT clock time=0
+04:08:25.748 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.748 OUT clock time=0
+04:08:25.769 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.769 OUT clock time=0
+04:08:25.790 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.790 OUT clock time=0
+04:08:25.810 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.810 OUT clock time=0
+04:08:25.831 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.831 OUT clock time=0
+04:08:25.852 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.852 OUT clock time=0
+04:08:25.873 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.873 OUT clock time=0
+04:08:25.894 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.894 OUT clock time=0
+04:08:25.914 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.915 OUT clock time=0
+04:08:25.934 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.934 OUT clock time=0
+04:08:25.955 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.955 OUT clock time=0
+04:08:25.976 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.976 OUT clock time=0
+04:08:25.997 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:25.997 OUT clock time=0
+04:08:26.018 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:26.018 OUT clock time=0
+04:08:26.039 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:26.039 OUT clock time=0
+04:08:26.059 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:26.059 OUT clock time=0
+04:08:26.080 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:26.080 OUT clock time=0
+04:08:26.101 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:26.101 OUT clock time=0
+04:08:26.122 IN  [Launchpad Pro MK3 LPProMK3 MIDI] clock time=0
+04:08:26.122 OUT clock time=0
