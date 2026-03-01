@@ -162,6 +162,9 @@ class MidiPresetService:
         # Seq pulse delay: config.yaml "seq_delay" overrides the class default
         self._seq_delay = self.config.get("seq_delay", self._SEQ_PULSE_DELAY)
 
+        # Adaptive split parameters
+        self.max_reach = int(self.config.get("max_reach", 16))
+
         # Runtime state
         self.load_mode = False
 
@@ -822,7 +825,20 @@ class MidiPresetService:
 
         # Note range mappings — list of {low, high, mask, compare, ...}
         self.note_mappings = data.get("note_mappings", [])
+        _adaptive_edges = []   # (nm, "low"|"high", note_val, boundary_name)
         for nm in self.note_mappings:
+            # Parse adaptive boundary syntax: [59, "split1"] or (59, split1)
+            for edge in ("low", "high"):
+                raw = nm.get(edge)
+                if raw is None:
+                    continue
+                note_val, bound_name = self._parse_adaptive_edge(raw)
+                nm[edge] = note_val
+                if bound_name is not None:
+                    _adaptive_edges.append((nm, edge, note_val, bound_name))
+            # Preserve original low/high for adaptive boundary reset
+            nm["_orig_low"] = nm.get("low", 0)
+            nm["_orig_high"] = nm.get("high", 127)
             nm.setdefault("mask", 0)
             nm.setdefault("compare", 0)
             # monophonic shorthand → max_polyphony: 1 + optional instance
@@ -843,6 +859,52 @@ class MidiPresetService:
         # Resolve named polyphony instances
         self.poly_instances = self._resolve_poly_instances()
 
+        # Build adaptive boundary definitions
+        self.adaptive_bounds = {}
+        for nm, edge, note_val, bound_name in _adaptive_edges:
+            if bound_name not in self.adaptive_bounds:
+                self.adaptive_bounds[bound_name] = {
+                    "default": None,       # high of lower range at rest
+                    "current": None,       # high of lower range (dynamic)
+                    "lower_nms": [],       # ranges whose high is this boundary
+                    "upper_nms": [],       # ranges whose low is this boundary
+                    "lower_held": set(),   # notes currently held on lower side
+                    "upper_held": set(),   # notes currently held on upper side
+                    "lower_ghosts": [],    # recently released (newest first)
+                    "upper_ghosts": [],    # recently released (newest first)
+                    "lower_all_released": True,
+                    "upper_all_released": True,
+                }
+            ab = self.adaptive_bounds[bound_name]
+            if edge == "high":
+                ab["lower_nms"].append(nm)
+                if ab["default"] is None:
+                    ab["default"] = note_val
+                    ab["current"] = note_val
+                elif ab["default"] != note_val:
+                    _log("WARN", f"Adaptive boundary '{bound_name}': "
+                         f"conflicting default high "
+                         f"({note_val} vs {ab['default']}), using first")
+            else:   # low
+                ab["upper_nms"].append(nm)
+                # Verify consistency: low should be default + 1
+                if ab["default"] is not None:
+                    expected = ab["default"] + 1
+                    if note_val != expected:
+                        _log("WARN", f"Adaptive boundary '{bound_name}': "
+                             f"low {note_val} != expected {expected}, "
+                             f"adjusting")
+                        nm["low"] = expected
+                        nm["_orig_low"] = expected
+        # Log adaptive boundaries at startup
+        for name, ab in self.adaptive_bounds.items():
+            lo_count = len(ab["lower_nms"])
+            up_count = len(ab["upper_nms"])
+            _log("INIT", f"Adaptive split '{name}': "
+                 f"default {ab['default']}/{ab['default'] + 1}, "
+                 f"{lo_count} lower + {up_count} upper range(s), "
+                 f"max_reach={self.max_reach}")
+
         # Runtime state for the mapping engine
         self.shift_state = 0            # 16-bit bitmask
         self.joystick_states = {}       # index -> {neg_held, pos_held, latch}
@@ -855,6 +917,33 @@ class MidiPresetService:
 
     _POLY_PARAM_KEYS = ("max_polyphony", "fallback_priority", "replace_priority",
                         "allocation_strategy")
+    _ADAPTIVE_GHOST_MAX = 10   # recent notes remembered per boundary side
+
+    @staticmethod
+    def _parse_adaptive_edge(val):
+        """Parse a note_mapping low/high that may specify an adaptive boundary.
+
+        Supports:
+          59              → (59, None)      — fixed edge
+          [59, "split1"]  → (59, "split1")  — adaptive (YAML list)
+          "(59, split1)"  → (59, "split1")  — adaptive (tuple string)
+
+        Returns ``(note_value, boundary_name_or_None)``.
+        """
+        if isinstance(val, int):
+            return (val, None)
+        if isinstance(val, list) and len(val) == 2:
+            return (int(val[0]), str(val[1]))
+        if isinstance(val, str):
+            s = val.strip()
+            if s.startswith("(") and s.endswith(")"):
+                parts = s[1:-1].split(",", 1)
+                if len(parts) == 2:
+                    try:
+                        return (int(parts[0].strip()), parts[1].strip())
+                    except ValueError:
+                        pass
+        return (int(val), None)
 
     def _resolve_poly_instances(self):
         """Validate and collect canonical parameters for named polyphony instances.
@@ -1661,6 +1750,177 @@ class MidiPresetService:
         if old is not None:
             old.cancel()
 
+    # -- Adaptive split boundary engine ----------------------------------------
+
+    def _adapt_boundaries(self, note):
+        """Evaluate and adjust adaptive split boundaries for a note-on.
+
+        Called *before* the note range matching loop so that nm["low"] and
+        nm["high"] reflect the adjusted positions.
+        """
+        for name, ab in self.adaptive_bounds.items():
+            current = ab["current"]
+            default = ab["default"]
+
+            # Only consider boundaries in the neighbourhood of this note
+            if (abs(note - current) > self.max_reach * 2
+                    and abs(note - default) > self.max_reach * 2):
+                continue
+
+            # Skip if already held on some side (retrigger)
+            if note in ab["lower_held"] or note in ab["upper_held"]:
+                continue
+
+            # -- Gather context --
+            lower_tracked = ab["lower_held"] | set(ab["lower_ghosts"])
+            upper_tracked = ab["upper_held"] | set(ab["upper_ghosts"])
+
+            # Distance to nearest tracked note on each side
+            lower_nearest = min(
+                (abs(note - n) for n in lower_tracked), default=999)
+            upper_nearest = min(
+                (abs(note - n) for n in upper_tracked), default=999)
+
+            # Reachable: nearest tracked note within max_reach
+            lower_reachable = lower_nearest <= self.max_reach
+            upper_reachable = upper_nearest <= self.max_reach
+
+            # Span viability: adding note must not exceed max_reach
+            # across currently held notes (physical hand constraint)
+            lower_viable = True
+            if ab["lower_held"]:
+                span = (max(max(ab["lower_held"]), note)
+                        - min(min(ab["lower_held"]), note))
+                if span > self.max_reach:
+                    lower_viable = False
+
+            upper_viable = True
+            if ab["upper_held"]:
+                span = (max(max(ab["upper_held"]), note)
+                        - min(min(ab["upper_held"]), note))
+                if span > self.max_reach:
+                    upper_viable = False
+
+            lower_ok = lower_reachable and lower_viable
+            upper_ok = upper_reachable and upper_viable
+
+            # Default side — based on the *original* boundary, not current
+            default_side = "lower" if note <= default else "upper"
+
+            # -- Decide which side this note belongs to --
+            if lower_ok and not upper_ok:
+                side = "lower"
+            elif upper_ok and not lower_ok:
+                side = "upper"
+            elif lower_ok and upper_ok:
+                # Both reachable+viable — weighted decision
+                lower_score = 1.0 / max(lower_nearest, 0.5)
+                upper_score = 1.0 / max(upper_nearest, 0.5)
+                # Bias toward the note's default side
+                if default_side == "lower":
+                    lower_score *= 1.5
+                else:
+                    upper_score *= 1.5
+                side = "lower" if lower_score >= upper_score else "upper"
+            else:
+                # Neither reachable — fall back to default
+                side = default_side
+
+            # -- Boundary adjustment --
+            if side == "lower" and note > current:
+                # Need to raise boundary to accommodate the note
+                if ab["upper_held"]:
+                    max_pos = min(ab["upper_held"]) - 1
+                else:
+                    max_pos = note
+                new_pos = min(note, max_pos)
+                if new_pos < note:
+                    # Can't raise enough — reassign to upper
+                    side = "upper"
+                else:
+                    self._set_adaptive_boundary(name, ab, new_pos)
+            elif side == "upper" and note <= current:
+                # Need to lower boundary to accommodate the note
+                if ab["lower_held"]:
+                    min_pos = max(ab["lower_held"])
+                else:
+                    min_pos = 0
+                new_pos = max(note - 1, min_pos)
+                if new_pos >= note:
+                    # Can't lower enough — reassign to lower
+                    side = "lower"
+                else:
+                    self._set_adaptive_boundary(name, ab, new_pos)
+            elif not ab["lower_held"] and not ab["upper_held"]:
+                # No notes held anywhere — if neither side has recent
+                # context near the note, drift boundary back toward default.
+                if not lower_tracked and not upper_tracked:
+                    if current != default:
+                        self._set_adaptive_boundary(
+                            name, ab, default)
+
+            # -- Track note on the chosen side --
+            held_key = f"{side}_held"
+            ghosts_key = f"{side}_ghosts"
+            released_key = f"{side}_all_released"
+
+            # Fresh phrase start: clear ghosts, begin new accumulation
+            if ab[released_key] and not ab[held_key]:
+                ab[ghosts_key] = []
+                ab[released_key] = False
+
+            ab[held_key].add(note)
+
+            # Remove from ghosts if present (it's alive again)
+            if note in ab[ghosts_key]:
+                ab[ghosts_key].remove(note)
+
+    def _adaptive_note_off(self, note):
+        """Update adaptive boundary hand tracking for a note-off."""
+        for name, ab in self.adaptive_bounds.items():
+            for side in ("lower", "upper"):
+                held_key = f"{side}_held"
+                ghosts_key = f"{side}_ghosts"
+                released_key = f"{side}_all_released"
+
+                if note not in ab[held_key]:
+                    continue
+
+                ab[held_key].discard(note)
+
+                # Add to ghost list (most recent first)
+                if note not in ab[ghosts_key]:
+                    ab[ghosts_key].insert(0, note)
+                # Trim oldest ghosts
+                max_g = self._ADAPTIVE_GHOST_MAX
+                while len(ab[ghosts_key]) > max_g:
+                    ab[ghosts_key].pop()
+
+                if not ab[held_key]:
+                    ab[released_key] = True
+                break   # note can only be on one side per boundary
+
+    def _set_adaptive_boundary(self, name, ab, new_pos):
+        """Move an adaptive boundary, updating linked note_mapping ranges.
+
+        *new_pos* is the new ``high`` of the lower range; the upper range's
+        ``low`` becomes ``new_pos + 1``.  Original values are preserved in
+        ``_orig_low`` / ``_orig_high`` so the boundary can drift back.
+        """
+        new_pos = max(0, min(126, new_pos))   # keep both sides non-empty
+        old_pos = ab["current"]
+        if new_pos == old_pos:
+            return
+        ab["current"] = new_pos
+        for nm in ab["lower_nms"]:
+            nm["high"] = new_pos
+        for nm in ab["upper_nms"]:
+            nm["low"] = new_pos + 1
+        _log("SPLIT",
+             f"'{name}' {old_pos}/{old_pos + 1} "
+             f"→ {new_pos}/{new_pos + 1} "
+             f"(default {ab['default']}/{ab['default'] + 1})")
+
     def _mapping_matches(self, entry):
         """Check if an action/definition's mapping filter matches the current input.
 
@@ -2191,9 +2451,15 @@ class MidiPresetService:
         # This ensures the release reaches the correct mapping even if
         # shift state changed while the key was held.
         if not is_note_on:
+            if self.adaptive_bounds:
+                self._adaptive_note_off(note)
             stored = self.note_on_origins.pop((msg.channel, note), None)
             if stored is not None:
                 return self._release_tracked_notes(note, stored)
+
+        # --- Note-on: adjust adaptive boundaries before range matching ---
+        if is_note_on and self.adaptive_bounds:
+            self._adapt_boundaries(note)
 
         results = []
         matched = False
@@ -3614,6 +3880,9 @@ class MidiPresetService:
                      f"max={params['max_polyphony']} "
                      f"fallback={params['fallback_priority']} "
                      f"replace={params['replace_priority']}")
+        if self.adaptive_bounds:
+            _log("INIT", f"Adaptive     : {len(self.adaptive_bounds)} boundary(s), "
+                 f"max_reach={self.max_reach}")
         if self.seq_defs:
             _log("INIT", f"Seq counters : {len(self.seq_defs)} defined "
                  f"(global delay: {self._seq_delay}s)")

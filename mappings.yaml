@@ -321,6 +321,29 @@ cc_mappings:
 #   channel   - override destination channel (1-based)
 #   name      - descriptive label for logging
 #
+# ---- Adaptive Split Boundaries ----
+#
+# low/high can be a [note, boundary_name] pair to create an adaptive
+# split that tracks hand position:
+#
+#   high: [59, split1]     ← lower range ends here by default
+#   low:  [60, split1]     ← upper range starts here by default
+#
+# Ranges sharing the same boundary name are linked.  The split point
+# moves dynamically based on which notes are being played:
+#   - Nearby notes (within max_reach) pull the boundary toward them
+#   - The physical hand-span constraint (max_reach) prevents a single
+#     range from claiming notes too far apart
+#   - When both hands wander away from the split, it drifts back to
+#     the default position
+#   - Recently released notes are remembered so chords and scale runs
+#     maintain context
+#
+# Multiple boundaries are supported (e.g. split1, split2) to create
+# three or more zones (bass / center / treble).
+#
+# Configure max_reach (semitones) in config.yaml (default: 16).
+#
 # Notes that match at least one range are forwarded (possibly modified).
 # Notes that match NO ranges are passed through unchanged.
 #

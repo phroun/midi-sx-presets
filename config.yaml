@@ -33,6 +33,11 @@ manufacturer_id: 0x7D
 
 seq_delay: 0.05
 
+# Maximum hand span in semitones for adaptive split boundaries.
+# Notes beyond this distance from any tracked note in a range are
+# assumed to belong to the adjacent range.
+max_reach: 16
+
 routing:
   inputs:
     - device: "UMC404HD 192k"
