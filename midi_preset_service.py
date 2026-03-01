@@ -2352,7 +2352,7 @@ class MidiPresetService:
             return build_vt(
                 int(vc.get("floor", 1)),
                 int(vc.get("low", 1)),
-                int(vc.get("cap", vc.get("high", 127))),
+                int(vc.get("cap", 127)),
                 float(vc.get("curve", 1.0)))
 
         # --- device-level defaults ---
@@ -2810,7 +2810,7 @@ class MidiPresetService:
             # Device-level velocity curve (shown only when no per-channel)
             vc = inp_cfg.get("velocity_curve")
             if vc and not per_ch_yaml:
-                vc_cap = vc.get("cap", vc.get("high", 127))
+                vc_cap = vc.get("cap", 127)
                 extras.append(
                     f"vel_curve(floor={vc.get('floor', 1)} "
                     f"low={vc.get('low', 1)} "
@@ -2881,7 +2881,7 @@ class MidiPresetService:
                 pc = inp_cfg.get("pressure_curve")
                 pc_tag = ""
                 if pc:
-                    pc_cap = pc.get("cap", pc.get("high", 127))
+                    pc_cap = pc.get("cap", 127)
                     pc_tag = (f" pcurve(fl={pc.get('floor', 1)}"
                               f" cap={pc_cap}"
                               f" c={pc.get('curve', 1.0)})")
