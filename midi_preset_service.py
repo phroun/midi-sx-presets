@@ -2375,6 +2375,12 @@ class MidiPresetService:
         # 100 = velocity is permanent minimum (aftertouch only adds).
         default_sustain_pct = float(
             inp_cfg.get("pressure_sustain", 0))
+        # Shelf: absolute MIDI value (0–127) for initial decay target.
+        # Decay settles at the shelf until the player's pressure
+        # reaches (or exceeds) the shelf level, which "unlocks" the
+        # floor.  After unlock, the output can drop to pressure_floor.
+        # 0 = no shelf (decay goes straight to floor/sustain).
+        default_shelf = int(inp_cfg.get("pressure_shelf", 0))
         # Slew rates in steps/sec.  0 = unlimited (no limiting).
         # Legacy behaviour: when omitted, slew_down defaults to
         # 127/decay_s (matching the old symmetric rate) and slew_up
@@ -2426,6 +2432,12 @@ class MidiPresetService:
             else:
                 sustain_pct = default_sustain_pct
 
+            # Shelf
+            if "pressure_shelf" in override:
+                shelf = int(override["pressure_shelf"])
+            else:
+                shelf = default_shelf
+
             # Slew rates (steps/sec)
             if "slew_up" in override:
                 slew_up = float(override["slew_up"])
@@ -2446,6 +2458,7 @@ class MidiPresetService:
                          "p2p": p2p,
                          "decay_s": decay_s,
                          "sustain_pct": sustain_pct,
+                         "shelf": shelf,
                          "slew_up": slew_up,
                          "slew_down": slew_down,
                          "debounce_s": debounce_s}
@@ -2547,6 +2560,7 @@ class MidiPresetService:
 
                 target = float(pressure)
                 floor_v = 0.0
+                shelf = copts.get("shelf", 0)
                 if decay_s > 0:
                     elapsed_s = now - info["start_t"]
                     frac = min(1.0, elapsed_s / decay_s)
@@ -2559,6 +2573,16 @@ class MidiPresetService:
                               if ptable is not None else 0.0)
                     sus_level = vel * sustain_pct / 100.0
                     decay_target = max(pfloor, sus_level)
+                    # Shelf: decay settles at shelf (above floor)
+                    # until the player's pressure reaches the
+                    # shelf level, which "unlocks" the floor.
+                    if shelf > 0:
+                        if (not info["shelf_unlocked"]
+                                and pressure >= shelf):
+                            info["shelf_unlocked"] = True
+                        if not info["shelf_unlocked"]:
+                            decay_target = max(
+                                decay_target, float(shelf))
                     floor_v = (decay_target
                                + (vel - decay_target)
                                * (1.0 - frac))
@@ -2667,7 +2691,8 @@ class MidiPresetService:
                                 "last_out": float(msg.velocity),
                                 "last_out_t": now_on,
                                 "last_sent": msg.velocity,
-                                "last_pressure": 0}
+                                "last_pressure": 0,
+                                "shelf_unlocked": False}
                             _log("P2P", f"ch{ch+1}/n{msg.note} "
                                  f"vel={msg.velocity} TRACK")
                         elif (msg.type == "note_off"
@@ -2774,6 +2799,15 @@ class MidiPresetService:
                     sus_tag = " sustain=per-ch"
                 else:
                     sus_tag = ""
+                # Collect unique shelf values across p2p channels
+                sh_vals = sorted({ch_opts[c - 1]["shelf"]
+                                  for c in p2p_chs})
+                if len(sh_vals) == 1 and sh_vals[0] > 0:
+                    shelf_tag = f" shelf={sh_vals[0]}"
+                elif any(v > 0 for v in sh_vals):
+                    shelf_tag = " shelf=per-ch"
+                else:
+                    shelf_tag = ""
                 # Collect unique slew values across p2p channels
                 su_vals = sorted({ch_opts[c - 1]["slew_up"]
                                   for c in p2p_chs})
@@ -2812,7 +2846,8 @@ class MidiPresetService:
                               f" c={pc.get('curve', 1.0)})")
                 extras.append(f"pressure_to_poly({p2p_label}"
                               f"{decay_tag}{sus_tag}"
-                              f"{slew_tag}{pc_tag}{db_tag})")
+                              f"{shelf_tag}{slew_tag}"
+                              f"{pc_tag}{db_tag})")
             # Per-channel overrides summary
             if per_ch_yaml:
                 per_parts = []
@@ -2836,6 +2871,9 @@ class MidiPresetService:
                         opc = over["pressure_curve"]
                         tags.append(
                             f"pcurve(c={opc.get('curve', 1.0)})")
+                    if "pressure_shelf" in over:
+                        tags.append(
+                            f"shelf={over['pressure_shelf']}")
                     if "slew_up" in over:
                         tags.append(
                             f"slew_up={over['slew_up']}")
