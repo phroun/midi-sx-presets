@@ -24,6 +24,26 @@
 # Plain strings (no default) are still valid — the engine falls back to
 # 64 for relative CCs and 0 for absolute CCs when no default is given.
 #
+# --- Tags ---
+#
+# Entries may include a ``tags`` list to control which preset banks
+# include them on save/recall.  Tags can also be set at the group
+# level (applied to all entries in the set), with per-entry tags
+# merging additively:
+#
+#   cc_sets:
+#     synth_ccs:
+#       tags: [synth]                              # group-level tag
+#       1:  {name: vcf_cutoff, default: 63}        # inherits [synth]
+#       90: {name: to_delay, tags: [effects]}      # gets [synth, effects]
+#     mix_ccs:
+#       3:  {name: to_duck_out, tags: [routing]}   # just [routing]
+#       10: {name: pan, default: 64}               # no tags → ["default"]
+#
+# Parameters with no tags (and no group-level tags) get the implicit
+# "default" tag.  Use ``bank_tags`` in config.yaml to control which
+# tags each bank includes on save and recall.
+#
 # When using destinations, put a "default" set in cc_sets for any
 # destination that doesn't specify its own set.
 

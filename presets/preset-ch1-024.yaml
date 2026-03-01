@@ -1,0 +1,13 @@
+name: Preset 24
+read_only: false
+mono_to_duck_out: 0
+mono_to_perf_filter: 0
+mono_to_bypass_duck: 0
+mono_pan: 63
+mono_to_dsp: 0
+bass_to_duck_out: 110
+bass_to_perf_filter: 0
+bass_to_bypass_duck: 0
+bass_pan: 63
+bass_to_dsp: 0
+pads_solo_mode: 0

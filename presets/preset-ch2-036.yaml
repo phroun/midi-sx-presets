@@ -1,0 +1,26 @@
+name: Preset 36
+read_only: false
+poly_to_duck_out: 127
+poly_to_perf_filter: 127
+perf_to_duck_out: 56
+poly_vcf_cutoff: 37
+poly_release: 0
+perf_pan: 61
+poly_pwm_depth: 112
+poly_pwm_rate: 31
+poly_vibrato_rate: 89
+poly_vibrato_depth: 6
+poly_tremolo_rate: 93
+poly_tremolo_depth: 66
+poly_wah_rate: 86
+poly_attack: 0
+poly_decay: 0
+poly_sustain: 67
+poly_vcf_attack: 0
+poly_vcf_decay: 5
+poly_vcf_sustain: 10
+poly_to_dsp: 0
+poly_to_delay: 0
+poly_to_reverb: 0
+poly_stereo_pan: 63
+perf_to_dsp: 0

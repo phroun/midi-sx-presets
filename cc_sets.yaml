@@ -24,6 +24,9 @@
 # Plain strings (no default) are still valid — the engine falls back to
 # 64 for relative CCs and 0 for absolute CCs when no default is given.
 #
+# Tags can be specified per-entry or at the group level (see cc_sets.yaml.example).
+# Parameters with no tags get the implicit "default" tag.
+#
 # When using destinations, put a "default" set in cc_sets for any
 # destination that doesn't specify its own set.
 
@@ -34,6 +37,8 @@ cc_sets:
     9:  {name: to_bypass_duck, default: 0}
     10: {name: pan,            default: 63}
     11: {name: to_dsp,         default: 0}
+    90: {name: to_delay,      default: 0}
+    91: {name: to_reverb,     default: 0}
     102: {name: to_loop_a,    default: 0,   tags: [looper]}
     103: {name: to_loop_b,    default: 0,   tags: [looper]}
   loop_ccs:
