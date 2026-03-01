@@ -2585,19 +2585,25 @@ class MidiPresetService:
                     pfloor = (float(ptable[1])
                               if ptable is not None else 0.0)
                     decay_target = pfloor
-                    # Shelf: decay settles at shelf (above floor)
+                    # Shelf gate: no downward movement is allowed
                     # until the player's pressure reaches the
                     # shelf level, which "unlocks" the floor.
-                    # Only applies when velocity is above the
-                    # shelf — a soft strike below the shelf
-                    # decays straight to the floor.
-                    if shelf > 0 and vel > shelf:
+                    #
+                    # vel > shelf  → decay holds at shelf until
+                    #                unlock, then drops to floor
+                    # vel <= shelf → output holds at vel (no decay
+                    #                at all) until unlock
+                    if shelf > 0:
                         if (not info["shelf_unlocked"]
                                 and pressure >= shelf):
                             info["shelf_unlocked"] = True
                         if not info["shelf_unlocked"]:
-                            decay_target = max(
-                                decay_target, float(shelf))
+                            if vel > shelf:
+                                decay_target = max(
+                                    decay_target, float(shelf))
+                            else:
+                                # Hold at velocity — no decay
+                                decay_target = float(vel)
                     floor_v = (decay_target
                                + (vel - decay_target)
                                * (1.0 - frac))
