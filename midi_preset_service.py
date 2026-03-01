@@ -2330,7 +2330,7 @@ class MidiPresetService:
 
         Returns a dict keyed by 0-based channel number.  Each value is a dict
         with keys ``vtable``, ``ptable``, ``p2p`` (bool),
-        ``decay_s`` (float), ``sustain_pct`` (float, 0–100),
+        ``decay_s`` (float), ``shelf`` (int), ``shelf_top`` (int),
         ``slew_up`` (float, steps/sec), ``slew_down`` (float,
         steps/sec), ``debounce_s`` (float).  ``ptable`` is an
         optional 128-entry lookup table for pressure values (same
@@ -2339,7 +2339,8 @@ class MidiPresetService:
 
         Device-level ``velocity_curve``, ``pressure_curve``,
         ``pressure_to_poly``, ``pressure_decay``,
-        ``pressure_sustain``, ``slew_up``, ``slew_down`` and
+        ``pressure_shelf``, ``pressure_shelf_top``,
+        ``slew_up``, ``slew_down`` and
         ``note_debounce`` act as defaults; ``per_channel`` entries
         (keyed by 1-based channel number in the YAML) override
         them.
@@ -2370,11 +2371,6 @@ class MidiPresetService:
             default_p2p_chs = set()
 
         default_decay_s = float(inp_cfg.get("pressure_decay", 0)) / 1000.0
-        # Sustain: percentage of velocity to hold as permanent floor
-        # after the decay period.  0 = decay to zero (default),
-        # 100 = velocity is permanent minimum (aftertouch only adds).
-        default_sustain_pct = float(
-            inp_cfg.get("pressure_sustain", 0))
         # Shelf: absolute MIDI value (0–127) for initial decay target.
         # Decay settles at the shelf until the player's pressure
         # reaches (or exceeds) the shelf level, which "unlocks" the
@@ -2430,12 +2426,6 @@ class MidiPresetService:
             else:
                 decay_s = default_decay_s
 
-            # Sustain
-            if "pressure_sustain" in override:
-                sustain_pct = float(override["pressure_sustain"])
-            else:
-                sustain_pct = default_sustain_pct
-
             # Shelf
             if "pressure_shelf" in override:
                 shelf = int(override["pressure_shelf"])
@@ -2465,7 +2455,6 @@ class MidiPresetService:
             opts[ch0] = {"vtable": vtable, "ptable": ptable,
                          "p2p": p2p,
                          "decay_s": decay_s,
-                         "sustain_pct": sustain_pct,
                          "shelf": shelf,
                          "shelf_top": shelf_top,
                          "slew_up": slew_up,
@@ -2550,7 +2539,6 @@ class MidiPresetService:
                 Caller must hold p2p_lock.
                 """
                 decay_s = copts.get("decay_s", 0)
-                sustain_pct = copts.get("sustain_pct", 0)
                 slew_up = copts.get("slew_up", 0)
                 slew_down = copts.get("slew_down", 0)
                 ptable = copts.get("ptable")
@@ -2591,14 +2579,12 @@ class MidiPresetService:
                     elapsed_s = now - info["start_t"]
                     frac = min(1.0, elapsed_s / decay_s)
                     # Decay target: pressure floor (from pressure
-                    # curve) or velocity-based sustain, whichever
-                    # is higher.  pressure_curve.floor is the
-                    # lowest the decay can settle to; sustain_pct
-                    # is the legacy velocity-relative floor.
+                    # curve).  This is the absolute minimum the
+                    # decay can settle to (ptable[1] = the
+                    # pressure curve's floor output value).
                     pfloor = (float(ptable[1])
                               if ptable is not None else 0.0)
-                    sus_level = vel * sustain_pct / 100.0
-                    decay_target = max(pfloor, sus_level)
+                    decay_target = pfloor
                     # Shelf: decay settles at shelf (above floor)
                     # until the player's pressure reaches the
                     # shelf level, which "unlocks" the floor.
@@ -2816,15 +2802,6 @@ class MidiPresetService:
                     decay_tag = " decay=per-ch"
                 else:
                     decay_tag = ""
-                # Collect unique sustain values across p2p channels
-                sus_vals = sorted({ch_opts[c - 1]["sustain_pct"]
-                                   for c in p2p_chs})
-                if len(sus_vals) == 1 and sus_vals[0] > 0:
-                    sus_tag = f" sustain={int(sus_vals[0])}%"
-                elif any(v > 0 for v in sus_vals):
-                    sus_tag = " sustain=per-ch"
-                else:
-                    sus_tag = ""
                 # Collect unique shelf values across p2p channels
                 sh_vals = sorted({ch_opts[c - 1]["shelf"]
                                   for c in p2p_chs})
@@ -2877,7 +2854,7 @@ class MidiPresetService:
                               f" hi={pc.get('high', 127)}"
                               f" c={pc.get('curve', 1.0)})")
                 extras.append(f"pressure_to_poly({p2p_label}"
-                              f"{decay_tag}{sus_tag}"
+                              f"{decay_tag}"
                               f"{shelf_tag}{slew_tag}"
                               f"{pc_tag}{db_tag})")
             # Per-channel overrides summary
@@ -2896,9 +2873,6 @@ class MidiPresetService:
                             "p2p" if over["pressure_to_poly"] else "!p2p")
                     if "pressure_decay" in over:
                         tags.append(f"decay={over['pressure_decay']}ms")
-                    if "pressure_sustain" in over:
-                        tags.append(
-                            f"sustain={over['pressure_sustain']}%")
                     if "pressure_curve" in over:
                         opc = over["pressure_curve"]
                         tags.append(
