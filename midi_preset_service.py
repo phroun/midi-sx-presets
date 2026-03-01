@@ -759,7 +759,8 @@ class MidiPresetService:
         self._center_trackers = {}      # dest_key -> center-snap wiggle state
         self._center_timers = {}        # dest_key -> threading.Timer for idle detect
 
-    _POLY_PARAM_KEYS = ("max_polyphony", "fallback_priority", "replace_priority")
+    _POLY_PARAM_KEYS = ("max_polyphony", "fallback_priority", "replace_priority",
+                        "allocation_strategy")
 
     def _resolve_poly_instances(self):
         """Validate and collect canonical parameters for named polyphony instances.
@@ -782,6 +783,8 @@ class MidiPresetService:
                 "max_polyphony": nm["max_polyphony"],
                 "fallback_priority": nm.get("fallback_priority", "most_recent"),
                 "replace_priority": nm.get("replace_priority", "lowest"),
+                "allocation_strategy": nm.get("allocation_strategy",
+                                              "round_robin"),
             }
             if inst not in defs:
                 defs[inst] = params
@@ -1638,12 +1641,13 @@ class MidiPresetService:
         """Get or create polyphony state for a pool (instance name or channel)."""
         if key not in self.poly_states:
             self.poly_states[key] = {"held": [], "active": [],
-                                     "dist_rr": 0}
+                                     "dist_rr": 0,
+                                     "dist_release_times": {}}
         return self.poly_states[key]
 
     def _poly_note_on(self, state, pitch, velocity, max_poly,
                       replace_priority, transpose, out_ch,
-                      dist_slots=None):
+                      dist_slots=None, alloc_strategy="round_robin"):
         """Process note-on through polyphony limiter.
 
         Tracks notes by their original (pre-transpose) pitch, along with
@@ -1654,13 +1658,14 @@ class MidiPresetService:
         where reason is one of: "new", "retrigger", "replace", "steal".
 
         When *dist_slots* is provided (a list of 0-based MIDI channels),
-        each new voice is assigned to the next available slot in round-robin
-        order.  The slot's channel overrides *out_ch*.
+        each new voice is assigned to the next available slot using the
+        *alloc_strategy* (round_robin, first_available, most_idle, or
+        least_idle).  The slot's channel overrides *out_ch*.
         """
         now = time.monotonic()
 
         if dist_slots:
-            slot_ch = self._dist_alloc(state, dist_slots)
+            slot_ch = self._dist_alloc(state, dist_slots, alloc_strategy)
         else:
             slot_ch = out_ch
 
@@ -1709,23 +1714,55 @@ class MidiPresetService:
 
         return results
 
-    def _dist_alloc(self, state, slots):
-        """Pick the next distribution slot using round-robin.
+    def _dist_alloc(self, state, slots, strategy="round_robin"):
+        """Pick the next distribution slot according to *strategy*.
 
-        Prefers free slots (channels not currently in use by an active note).
-        Falls back to pure round-robin when all slots are occupied.
+        Strategies (all prefer free slots first, differ in how they choose):
+
+        - ``round_robin`` (default): cycle through slots in order.
+        - ``first_available``: always pick the lowest-index free slot.
+        - ``most_idle``: pick the free slot whose last note was released
+          longest ago (the one that has been sitting idle the longest).
+        - ``least_idle``: pick the free slot whose last note was released
+          most recently.
+
+        When all slots are occupied the strategy falls back to round-robin
+        so that voice-stealing can free one.
         """
-        active_channels = [n["out_ch"] for n in state["active"]]
+        active_channels = set(n["out_ch"] for n in state["active"])
+        free = [ch for ch in slots if ch not in active_channels]
+
+        if free:
+            if strategy == "first_available":
+                return free[0]
+
+            if strategy in ("most_idle", "least_idle"):
+                rt = state.get("dist_release_times", {})
+                # Slots never yet released get timestamp 0 (oldest)
+                pick_max = (strategy == "most_idle")
+                best = None
+                best_time = None
+                for ch in free:
+                    t = rt.get(ch, 0)
+                    if best is None or (pick_max and t < best_time) or (
+                            not pick_max and t > best_time):
+                        best = ch
+                        best_time = t
+                return best
+
+            # round_robin (default)
+            n = len(slots)
+            start = state["dist_rr"] % n
+            for i in range(n):
+                idx = (start + i) % n
+                ch = slots[idx]
+                if ch not in active_channels:
+                    state["dist_rr"] = idx + 1
+                    return ch
+
+        # All occupied — pure round-robin (voice stealing will free one)
         n = len(slots)
         start = state["dist_rr"] % n
-        # First pass: find the next free slot from the round-robin cursor
-        for i in range(n):
-            idx = (start + i) % n
-            ch = slots[idx]
-            if ch not in active_channels:
-                state["dist_rr"] = idx + 1
-                return ch
-        # All occupied — pure round-robin (voice stealing will free one)
         ch = slots[start]
         state["dist_rr"] = start + 1
         return ch
@@ -1767,6 +1804,9 @@ class MidiPresetService:
                             fallback["velocity"], "fallback",
                             fallback.get("transpose", transpose),
                             rel_out_ch))
+        else:
+            # Slot is now truly free — record release time for idle tracking
+            state["dist_release_times"][rel_out_ch] = time.monotonic()
 
         return results
 
@@ -1944,6 +1984,8 @@ class MidiPresetService:
                     replace_pri = params.get("replace_priority", "lowest")
                     fallback_pri = params.get(
                         "fallback_priority", "most_recent")
+                    alloc_strat = params.get("allocation_strategy",
+                                             "round_robin")
                 elif dist_slots is not None:
                     # Distribution without instance name — key by slot list
                     pool_key = ("_dist", tuple(dist_slots))
@@ -1951,6 +1993,8 @@ class MidiPresetService:
                     replace_pri = nm.get("replace_priority", "lowest")
                     fallback_pri = nm.get(
                         "fallback_priority", "most_recent")
+                    alloc_strat = nm.get("allocation_strategy",
+                                         "round_robin")
                 else:
                     # Legacy: no instance name, key by output channel
                     pool_key = out_ch
@@ -1958,13 +2002,16 @@ class MidiPresetService:
                     replace_pri = nm.get("replace_priority", "lowest")
                     fallback_pri = nm.get(
                         "fallback_priority", "most_recent")
+                    alloc_strat = nm.get("allocation_strategy",
+                                         "round_robin")
 
                 state = self._get_poly_state(pool_key)
 
                 if is_note_on:
                     actions = self._poly_note_on(
                         state, note, msg.velocity, max_poly, replace_pri,
-                        transpose, out_ch, dist_slots=dist_slots)
+                        transpose, out_ch, dist_slots=dist_slots,
+                        alloc_strategy=alloc_strat)
                     # Track origin for later note-off routing
                     origins.append({
                         "has_poly": True,
