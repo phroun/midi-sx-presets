@@ -146,6 +146,9 @@ class MidiPresetService:
         self.seq_states = {}   # {name: current_step (1-based)}
         self.seq_defs = {}     # {name: {reset_cc, reset_ch, next_cc, next_ch, max}}
 
+        # Adaptive split parameters (needed before _load_cc_mappings)
+        self.max_reach = int(self.config.get("max_reach", 16))
+
         self._load_cc_mappings()
 
         # Build reverse lookups (name -> number) for each set
@@ -161,9 +164,6 @@ class MidiPresetService:
 
         # Seq pulse delay: config.yaml "seq_delay" overrides the class default
         self._seq_delay = self.config.get("seq_delay", self._SEQ_PULSE_DELAY)
-
-        # Adaptive split parameters
-        self.max_reach = int(self.config.get("max_reach", 16))
 
         # Runtime state
         self.load_mode = False
