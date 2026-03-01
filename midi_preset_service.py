@@ -2380,20 +2380,21 @@ class MidiPresetService:
     # -- Extra input helpers ---------------------------------------------------
 
     @staticmethod
-    def _build_velocity_table(floor_vel, low_in, cap, curve_exp):
+    def _build_velocity_table(floor_vel, low_in, cap, curve_exp,
+                              high_in=127):
         """Build a 128-entry velocity lookup table.
 
         - Index 0 stays 0 (velocity 0 = note-off semantics).
-        - [1, low_in)  → floor_vel  (clamp quiet playing to the floor).
-        - [low_in, cap] → [floor_vel, cap] via power curve.
-        - (cap, 127]    → cap  (hard ceiling).
+        - [1, low_in)   → floor_vel  (clamp quiet playing to the floor).
+        - [low_in, high_in] → [floor_vel, cap] via power curve.
+        - (high_in, 127]    → cap  (hard ceiling).
         """
         table = [0] * 128
         for v in range(1, 128):
             if v <= low_in:
                 table[v] = floor_vel
-            elif v <= cap:
-                t = (v - low_in) / (cap - low_in)
+            elif v <= high_in:
+                t = (v - low_in) / (high_in - low_in)
                 out = floor_vel + (cap - floor_vel) * (t ** curve_exp)
                 table[v] = max(floor_vel, min(cap, int(round(out))))
             else:
@@ -2433,7 +2434,8 @@ class MidiPresetService:
                 int(vc.get("floor", 1)),
                 int(vc.get("low", 1)),
                 int(vc.get("cap", 127)),
-                float(vc.get("curve", 1.0)))
+                float(vc.get("curve", 1.0)),
+                int(vc.get("high", 127)))
 
         # --- device-level defaults ---
         default_vc = inp_cfg.get("velocity_curve")

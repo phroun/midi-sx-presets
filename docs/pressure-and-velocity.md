@@ -12,15 +12,16 @@ Remap note-on velocity through a power curve lookup table.
 velocity_curve:
   floor: 30       # Minimum output (inputs below low clamp here)
   low: 50         # Input value that maps to floor
-  cap: 99         # Maximum output (inputs above cap clamp here)
+  cap: 99         # Maximum output
+  high: 127       # Input value that maps to cap (default 127)
   curve: 0.5      # Power exponent: < 1 = more sensitive at low end, > 1 = less
 ```
 
 The 128-entry table is built at startup:
 - Index 0 → 0 (note-off semantics).
 - [1, low) → floor (quiet playing clamps to floor).
-- [low, cap] → [floor, cap] via `floor + (cap - floor) * ((v - low) / (cap - low))^curve`.
-- (cap, 127] → cap (hard ceiling).
+- [low, high] → [floor, cap] via `floor + (cap - floor) * ((v - low) / (high - low))^curve`.
+- (high, 127] → cap (hard ceiling).
 
 ---
 

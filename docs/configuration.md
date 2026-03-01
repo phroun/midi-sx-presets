@@ -64,7 +64,8 @@ Each entry under `routing.inputs` supports:
 velocity_curve:
   floor: 30       # Minimum output velocity (inputs [1, low) clamp here)
   low: 50         # Input value that maps to floor
-  cap: 99         # Maximum output velocity (inputs above cap clamp here)
+  cap: 99         # Maximum output velocity
+  high: 127       # Input value that maps to cap (default 127; inputs above high clamp to cap)
   curve: 0.5      # Power curve exponent (< 1 = more sensitive, > 1 = less)
 ```
 
