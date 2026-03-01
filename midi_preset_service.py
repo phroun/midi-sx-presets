@@ -1438,6 +1438,24 @@ class MidiPresetService:
         self._mark_dirty()
         return internal
 
+    def _midi_reset(self):
+        """Send All Notes Off + Reset All Controllers on every channel.
+
+        Called once at startup before _boot_sync so the hardware begins
+        in a clean state — no hanging notes or stale aftertouch from a
+        previous session.
+        """
+        if not self.midi_out:
+            return
+        for ch in range(16):
+            self.midi_out.send(mido.Message(
+                "control_change", channel=ch, control=123, value=0))
+            self.midi_out.send(mido.Message(
+                "control_change", channel=ch, control=121, value=0))
+            self.midi_out.send(mido.Message(
+                "aftertouch", channel=ch, value=0))
+        _log("BOOT", "Sent MIDI reset (All Notes Off / Reset All Controllers) on all channels")
+
     def _boot_sync(self):
         """Populate missing destinations from defaults and send all to hardware.
 
@@ -3656,7 +3674,8 @@ class MidiPresetService:
                 if not self.midi_in and not self.extra_inputs:
                     _log("WARN", "All inputs disabled — no MIDI source")
 
-                # Send saved/default state to hardware so it matches immediately
+                # Clean slate, then send saved state to hardware
+                self._midi_reset()
                 self._boot_sync()
 
                 # Unified message loop — all inputs feed the queue
@@ -3678,6 +3697,7 @@ class MidiPresetService:
                 self.midi_return = self.midi_out
                 self._msg_source = port_name
 
+                self._midi_reset()
                 self._boot_sync()
 
                 for msg in self.midi_in:
