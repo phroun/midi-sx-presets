@@ -176,6 +176,9 @@ class MidiPresetService:
         self.midi_return = None  # Recall output (= midi_out in standalone mode)
         self.extra_inputs = []   # Additional input ports from routing.inputs
         self.p2p_channels = set()  # 0-based channels with pressure-to-poly
+        # Velocity-destination pending CCs awaiting target channel resolution.
+        # Key: (source_device, ch0, note), value: {"cc", "value"}
+        self._vel_dest_pending = {}
 
     # -- Config / persistence -------------------------------------------------
 
@@ -2208,9 +2211,11 @@ class MidiPresetService:
                 return  # Intercepted
             mapped = self._process_note_mapping(msg)
             if mapped is not None:
+                self._send_pending_vel_cc(msg, mapped)
                 for m in mapped:
                     self._forward(m)
                 return
+            self._send_pending_vel_cc(msg, [msg])
             self._forward(msg)
             return
 
@@ -2300,6 +2305,31 @@ class MidiPresetService:
         if self.routing and self.midi_out:
             self.midi_out.send(msg)
 
+    def _send_pending_vel_cc(self, msg, mapped_msgs):
+        """Send a deferred velocity-destination CC (channel: target).
+
+        Called from _handle_message after _process_note_mapping has
+        resolved the target channel.  The CC is sent *before* the
+        note-on is forwarded.
+        """
+        src = getattr(self, "_msg_source", None)
+        key = (src, msg.channel, msg.note)
+        pend = self._vel_dest_pending.pop(key, None)
+        if pend is None:
+            return
+        # Determine target channel from mapped output or origins
+        origins = self.note_on_origins.get((msg.channel, msg.note))
+        if origins:
+            dest_ch = origins[0]["out_ch"]
+        elif mapped_msgs:
+            # Fall back to first mapped message's channel
+            dest_ch = mapped_msgs[0].channel
+        else:
+            dest_ch = msg.channel
+        self._forward(mido.Message(
+            "control_change", channel=dest_ch,
+            control=pend["cc"], value=pend["value"]))
+
     # -- Extra input helpers ---------------------------------------------------
 
     @staticmethod
@@ -2339,8 +2369,11 @@ class MidiPresetService:
         Device-level ``velocity_curve``, ``pressure_curve``,
         ``pressure_to_poly``, ``velocity_decay``,
         ``pressure_shelf``, ``pressure_shelf_top``,
-        ``pressure_slew_up``, ``pressure_slew_down`` and
-        ``note_debounce`` act as defaults; ``per_channel`` entries
+        ``pressure_slew_up``, ``pressure_slew_down``,
+        ``note_debounce``, ``pressure_start``,
+        ``pressure_start_decay``, ``velocity_destination``,
+        ``velocity_shelf`` and ``replace_note_velocity``
+        act as defaults; ``per_channel`` entries
         (keyed by 1-based channel number in the YAML) override
         them.
         """
@@ -2389,6 +2422,25 @@ class MidiPresetService:
         default_slew_down = float(inp_cfg.get("pressure_slew_down", 0))
         default_debounce_s = float(
             inp_cfg.get("note_debounce", 0)) / 1000.0
+        # pressure_start: "velocity" (default) or numeric 0-127
+        default_pressure_start = inp_cfg.get("pressure_start", "velocity")
+        if default_pressure_start != "velocity":
+            default_pressure_start = int(default_pressure_start)
+        default_ps_decay_s = float(
+            inp_cfg.get("pressure_start_decay", 0)) / 1000.0
+        # velocity_destination: {cc: <int>, channel: <int|"target">}
+        _vd_raw = inp_cfg.get("velocity_destination")
+        if _vd_raw:
+            _vd_ch = _vd_raw.get("channel", "source")
+            if _vd_ch not in ("source", "target"):
+                _vd_ch = int(_vd_ch) - 1  # 1-based → 0-based
+            default_vel_dest = {"cc": int(_vd_raw["cc"]),
+                                "ch_mode": _vd_ch}
+        else:
+            default_vel_dest = None
+        default_vel_shelf = int(inp_cfg.get("velocity_shelf", 0))
+        _rvn = inp_cfg.get("replace_note_velocity")
+        default_replace_vel = int(_rvn) if _rvn is not None else None
 
         # Determine every channel that needs an entry
         active_chs = ch_set if ch_set is not None else set(range(16))
@@ -2451,6 +2503,43 @@ class MidiPresetService:
             else:
                 debounce_s = default_debounce_s
 
+            # Pressure start
+            if "pressure_start" in override:
+                pressure_start = override["pressure_start"]
+                if pressure_start != "velocity":
+                    pressure_start = int(pressure_start)
+            else:
+                pressure_start = default_pressure_start
+            if "pressure_start_decay" in override:
+                ps_decay_s = (float(override["pressure_start_decay"])
+                              / 1000.0)
+            else:
+                ps_decay_s = default_ps_decay_s
+
+            # Velocity destination
+            if "velocity_destination" in override:
+                _ovd = override["velocity_destination"]
+                if _ovd:
+                    _ovd_ch = _ovd.get("channel", "source")
+                    if _ovd_ch not in ("source", "target"):
+                        _ovd_ch = int(_ovd_ch) - 1
+                    vel_dest = {"cc": int(_ovd["cc"]),
+                                "ch_mode": _ovd_ch}
+                else:
+                    vel_dest = None
+            else:
+                vel_dest = default_vel_dest
+            if "velocity_shelf" in override:
+                vel_shelf = int(override["velocity_shelf"])
+            else:
+                vel_shelf = default_vel_shelf
+            if "replace_note_velocity" in override:
+                _orv = override["replace_note_velocity"]
+                replace_vel = (int(_orv)
+                               if _orv is not None else None)
+            else:
+                replace_vel = default_replace_vel
+
             opts[ch0] = {"vtable": vtable, "ptable": ptable,
                          "p2p": p2p,
                          "decay_s": decay_s,
@@ -2458,7 +2547,12 @@ class MidiPresetService:
                          "shelf_top": shelf_top,
                          "slew_up": slew_up,
                          "slew_down": slew_down,
-                         "debounce_s": debounce_s}
+                         "debounce_s": debounce_s,
+                         "pressure_start": pressure_start,
+                         "ps_decay_s": ps_decay_s,
+                         "vel_dest": vel_dest,
+                         "vel_shelf": vel_shelf,
+                         "replace_vel": replace_vel}
 
         return opts
 
@@ -2478,6 +2572,7 @@ class MidiPresetService:
         # Quick lookups for the callback
         any_p2p = any(o["p2p"] for o in ch_opts.values())
         any_debounce = any(o["debounce_s"] > 0 for o in ch_opts.values())
+        any_vel_dest = any(o["vel_dest"] for o in ch_opts.values())
 
         # Register P2P channels so the main handler can suppress raw
         # channel aftertouch that leaks through the primary input
@@ -2487,7 +2582,7 @@ class MidiPresetService:
             ch0 for ch0, o in ch_opts.items() if o["p2p"])
 
         def make_cb(ch_filter, channel_opts, has_p2p,
-                    has_debounce, source):
+                    has_debounce, has_vel_dest, source):
             # Per-device note tracker:
             #   active[ch][note] = {"vel", "started", "start_t",
             #                       "last_out", "last_out_t",
@@ -2506,7 +2601,7 @@ class MidiPresetService:
             # arrives before the timer expires, the pending off is
             # cancelled (no audible gap).  Expired entries are flushed
             # on every callback invocation.
-            needs_tracking = has_p2p or has_debounce
+            needs_tracking = has_p2p or has_debounce or has_vel_dest
             active = {} if needs_tracking else None
             pending_off = {} if needs_tracking else None
             p2p_lock = (threading.Lock()
@@ -2514,6 +2609,10 @@ class MidiPresetService:
 
             def _put(m):
                 msg_queue.put((source, m))
+
+            def _put_vel_cc(m):
+                """Queue a velocity-destination CC that bypasses _handle_message."""
+                msg_queue.put(("_vel_cc", m))
 
             def _flush_pending(now):
                 """Release any debounced note-offs whose timer expired."""
@@ -2526,12 +2625,25 @@ class MidiPresetService:
                         if now >= pend["expire_t"]:
                             info = active.get(pch, {}).pop(pn, None)
                             pch_opts = channel_opts.get(pch, {})
-                            if (info is not None
-                                    and info["started"]
-                                    and pch_opts.get("p2p")):
-                                _put(mido.Message(
-                                    "polytouch", channel=pch,
-                                    note=pn, value=0))
+                            if info is not None and info["started"]:
+                                if pch_opts.get("p2p"):
+                                    _put(mido.Message(
+                                        "polytouch", channel=pch,
+                                        note=pn, value=0))
+                                vcc = info.get("vel_dest_cc")
+                                if vcc is not None:
+                                    dch = info.get("vel_dest_ch")
+                                    if dch is None:
+                                        o = self.note_on_origins\
+                                            .get((pch, pn))
+                                        dch = (o[0]["out_ch"]
+                                               if o else pch)
+                                    _put_vel_cc(mido.Message(
+                                        "control_change",
+                                        channel=dch,
+                                        control=vcc, value=0))
+                            self._vel_dest_pending.pop(
+                                (source, pch, pn), None)
                             _put(pend["off_msg"])
                             del pnotes[pn]
                     if not pnotes:
@@ -2544,7 +2656,12 @@ class MidiPresetService:
                 *pressure* must already be ptable-transformed.
                 Caller must hold p2p_lock.
                 """
-                decay_s = copts.get("decay_s", 0)
+                p_start = copts.get("pressure_start", "velocity")
+                if p_start != "velocity":
+                    # Numeric pressure_start: use its own decay
+                    decay_s = copts.get("ps_decay_s", 0)
+                else:
+                    decay_s = copts.get("decay_s", 0)
                 slew_up = copts.get("slew_up", 0)
                 slew_down = copts.get("slew_down", 0)
                 ptable = copts.get("ptable")
@@ -2552,7 +2669,7 @@ class MidiPresetService:
                         and slew_up == 0 and slew_down == 0):
                     slew_down = 127.0 / decay_s
 
-                vel = info["vel"]
+                vel = info.get("p_start_val", info["vel"])
                 is_start = False
                 if not info["started"]:
                     info["started"] = True
@@ -2662,7 +2779,42 @@ class MidiPresetService:
 
             # Background tick thread: re-evaluate decay/slew for
             # active notes so output updates even when no physical
-            # pressure messages arrive.
+            # pressure messages arrive.  Also drives velocity-
+            # destination CC decay.
+            def _vel_dest_tick(ch, note, info, copts, now):
+                """Compute velocity decay and queue CC update."""
+                vel_cc = info.get("vel_dest_cc")
+                if vel_cc is None:
+                    return
+                dest_ch = info.get("vel_dest_ch")
+                if dest_ch is None:
+                    # "target" mode — check if main thread resolved
+                    origins = self.note_on_origins.get(
+                        (ch, note))
+                    if origins:
+                        dest_ch = origins[0]["out_ch"]
+                        info["vel_dest_ch"] = dest_ch
+                    else:
+                        return  # not yet resolved
+                vel = info["vel"]
+                decay_s = copts.get("decay_s", 0)
+                vel_shelf = copts.get("vel_shelf", 0)
+                if decay_s <= 0 or vel <= vel_shelf:
+                    return  # no decay needed
+                elapsed = now - info["start_t"]
+                frac = min(1.0, elapsed / decay_s)
+                decayed = (vel_shelf
+                           + (vel - vel_shelf) * (1.0 - frac))
+                value = max(0, min(127, int(round(decayed))))
+                info["vel_decay_out"] = decayed
+                if value != info.get("vel_last_sent"):
+                    info["vel_last_sent"] = value
+                    _put_vel_cc(mido.Message(
+                        "control_change",
+                        channel=dest_ch,
+                        control=vel_cc,
+                        value=value))
+
             def _p2p_tick_loop():
                 while not self._state_stop.is_set():
                     if active:
@@ -2674,14 +2826,18 @@ class MidiPresetService:
                                 copts = channel_opts.get(ch, {})
                                 for note in list(ch_notes):
                                     info = ch_notes[note]
-                                    _p2p_calc(
+                                    if copts.get("p2p"):
+                                        _p2p_calc(
+                                            ch, note, info,
+                                            info["last_pressure"],
+                                            copts, now,
+                                            is_tick=True)
+                                    _vel_dest_tick(
                                         ch, note, info,
-                                        info["last_pressure"],
-                                        copts, now,
-                                        is_tick=True)
+                                        copts, now)
                     self._state_stop.wait(0.015)
 
-            if has_p2p:
+            if has_p2p or has_vel_dest:
                 tick_t = threading.Thread(
                     target=_p2p_tick_loop, daemon=True)
                 tick_t.start()
@@ -2711,19 +2867,82 @@ class MidiPresetService:
                             if pend is not None:
                                 return
                             now_on = time.monotonic()
-                            active.setdefault(ch, {})[msg.note] = {
+                            # Determine pressure start value
+                            p_start = copts.get(
+                                "pressure_start", "velocity")
+                            if p_start == "velocity":
+                                p_start_val = msg.velocity
+                            else:
+                                p_start_val = int(p_start)
+                            vel_dest = copts.get("vel_dest")
+                            note_info = {
                                 "vel": msg.velocity,
+                                "p_start_val": p_start_val,
                                 "started": True,
                                 "start_t": now_on,
-                                "last_out": float(msg.velocity),
+                                "last_out": float(p_start_val),
                                 "last_out_t": now_on,
-                                "last_sent": msg.velocity,
+                                "last_sent": p_start_val,
                                 "last_pressure": 0,
-                                "shelf_unlocked": False}
+                                "shelf_unlocked": False,
+                                # velocity destination tracking
+                                "vel_dest_cc": (
+                                    vel_dest["cc"]
+                                    if vel_dest else None),
+                                "vel_dest_ch": None,
+                                "vel_decay_out": float(
+                                    msg.velocity),
+                                "vel_last_sent": (
+                                    msg.velocity
+                                    if vel_dest else None)}
+                            active.setdefault(
+                                ch, {})[msg.note] = note_info
+                            # Send velocity CC to destination
+                            if vel_dest:
+                                cc = vel_dest["cc"]
+                                ch_mode = vel_dest["ch_mode"]
+                                if ch_mode == "source":
+                                    dest_ch = ch
+                                    note_info["vel_dest_ch"] = (
+                                        dest_ch)
+                                    _put_vel_cc(mido.Message(
+                                        "control_change",
+                                        channel=dest_ch,
+                                        control=cc,
+                                        value=msg.velocity))
+                                elif ch_mode == "target":
+                                    # Defer — resolved by
+                                    # _handle_message
+                                    self._vel_dest_pending[
+                                        (source, ch,
+                                         msg.note)] = {
+                                        "cc": cc,
+                                        "value": msg.velocity}
+                                else:
+                                    # Numeric channel (0-based)
+                                    dest_ch = ch_mode
+                                    note_info["vel_dest_ch"] = (
+                                        dest_ch)
+                                    _put_vel_cc(mido.Message(
+                                        "control_change",
+                                        channel=dest_ch,
+                                        control=cc,
+                                        value=msg.velocity))
+                                # Replace note-on velocity
+                                replace_vel = copts.get(
+                                    "replace_vel")
+                                if replace_vel is not None:
+                                    msg = msg.copy(
+                                        velocity=replace_vel)
+                                else:
+                                    msg = msg.copy(
+                                        velocity=p_start_val)
                             if copts.get("p2p"):
                                 _log("P2P",
                                      f"ch{ch+1}/n{msg.note} "
-                                     f"vel={msg.velocity} TRACK")
+                                     f"vel={note_info['vel']}"
+                                     f" p_start={p_start_val}"
+                                     f" TRACK")
                         elif (msg.type == "note_off"
                               or (msg.type == "note_on"
                                   and msg.velocity == 0)):
@@ -2744,17 +2963,34 @@ class MidiPresetService:
                                     return
                             info = (active.get(ch, {})
                                     .pop(msg.note, None))
-                            if (info is not None
-                                    and info["started"]
-                                    and copts.get("p2p")):
-                                _log("P2P",
-                                     f"ch{ch+1}/n{msg.note} "
-                                     f"vel={info['vel']} OFF "
-                                     f"last_out="
-                                     f"{info['last_out']:.1f}")
-                                _put(mido.Message(
-                                    "polytouch", channel=ch,
-                                    note=msg.note, value=0))
+                            if info is not None and info["started"]:
+                                if copts.get("p2p"):
+                                    _log("P2P",
+                                         f"ch{ch+1}/n{msg.note}"
+                                         f" vel={info['vel']}"
+                                         f" OFF last_out="
+                                         f"{info['last_out']:.1f}")
+                                    _put(mido.Message(
+                                        "polytouch", channel=ch,
+                                        note=msg.note, value=0))
+                                # Send final vel-dest CC
+                                vcc = info.get("vel_dest_cc")
+                                if vcc is not None:
+                                    dch = info.get("vel_dest_ch")
+                                    if dch is None:
+                                        o = self.note_on_origins\
+                                            .get((ch, msg.note))
+                                        if o:
+                                            dch = o[0]["out_ch"]
+                                        else:
+                                            dch = ch
+                                    _put_vel_cc(mido.Message(
+                                        "control_change",
+                                        channel=dch,
+                                        control=vcc, value=0))
+                            # Clean up pending vel-dest
+                            self._vel_dest_pending.pop(
+                                (source, ch, msg.note), None)
                         elif (msg.type in (
                                   "aftertouch", "polytouch")
                               and copts.get("p2p")):
@@ -2792,7 +3028,7 @@ class MidiPresetService:
             # a bad state (especially multi-port devices like the
             # Launchpad Pro MK3).
             cb = make_cb(ch_set, ch_opts, any_p2p,
-                         any_debounce, device)
+                         any_debounce, any_vel_dest, device)
             _open_result = [None, None]  # [port, exception]
 
             def _open_port():
@@ -2900,6 +3136,26 @@ class MidiPresetService:
                               f"{decay_tag}"
                               f"{shelf_tag}{slew_tag}"
                               f"{pc_tag}{db_tag})")
+            # Device-level pressure_start
+            ps_raw = inp_cfg.get("pressure_start")
+            if ps_raw is not None and ps_raw != "velocity":
+                ps_d = inp_cfg.get("pressure_start_decay", 0)
+                extras.append(
+                    f"pressure_start({ps_raw}"
+                    f" decay={ps_d}ms)")
+            # Device-level velocity_destination
+            vd_raw = inp_cfg.get("velocity_destination")
+            if vd_raw:
+                vd_parts = f"cc{vd_raw['cc']}"
+                vd_ch = vd_raw.get("channel", "source")
+                vd_parts += f",ch={vd_ch}"
+                vs = inp_cfg.get("velocity_shelf", 0)
+                if vs:
+                    vd_parts += f",shelf={vs}"
+                extras.append(f"vel_dest({vd_parts})")
+            rvn = inp_cfg.get("replace_note_velocity")
+            if rvn is not None:
+                extras.append(f"replace_vel={rvn}")
             # Per-channel overrides summary
             if per_ch_yaml:
                 per_parts = []
@@ -2935,6 +3191,25 @@ class MidiPresetService:
                     if "note_debounce" in over:
                         tags.append(
                             f"debounce={over['note_debounce']}ms")
+                    if "pressure_start" in over:
+                        tags.append(
+                            f"p_start={over['pressure_start']}")
+                    if "pressure_start_decay" in over:
+                        tags.append(
+                            f"ps_decay="
+                            f"{over['pressure_start_decay']}ms")
+                    if "velocity_destination" in over:
+                        vd = over["velocity_destination"]
+                        tags.append(
+                            f"vel_dest(cc{vd['cc']}"
+                            f",ch={vd.get('channel','src')})")
+                    if "velocity_shelf" in over:
+                        tags.append(
+                            f"vel_shelf={over['velocity_shelf']}")
+                    if "replace_note_velocity" in over:
+                        tags.append(
+                            f"rep_vel="
+                            f"{over['replace_note_velocity']}")
                     if tags:
                         per_parts.append(f"ch{ch1}:{','.join(tags)}")
                 if per_parts:
@@ -3095,6 +3370,9 @@ class MidiPresetService:
                     try:
                         source, msg = msg_queue.get(timeout=0.5)
                     except queue.Empty:
+                        continue
+                    if source == "_vel_cc":
+                        self._forward(msg)
                         continue
                     self._msg_source = source
                     self._handle_message(msg)
