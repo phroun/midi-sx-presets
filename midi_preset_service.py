@@ -2339,7 +2339,7 @@ class MidiPresetService:
         Device-level ``velocity_curve``, ``pressure_curve``,
         ``pressure_to_poly``, ``pressure_decay``,
         ``pressure_shelf``, ``pressure_shelf_top``,
-        ``slew_up``, ``slew_down`` and
+        ``pressure_slew_up``, ``pressure_slew_down`` and
         ``note_debounce`` act as defaults; ``per_channel`` entries
         (keyed by 1-based channel number in the YAML) override
         them.
@@ -2385,8 +2385,8 @@ class MidiPresetService:
         # 127/decay_s (matching the old symmetric rate) and slew_up
         # defaults to 0 (unlimited) so pressing harder responds
         # instantly.
-        default_slew_up = float(inp_cfg.get("slew_up", 0))
-        default_slew_down = float(inp_cfg.get("slew_down", 0))
+        default_slew_up = float(inp_cfg.get("pressure_slew_up", 0))
+        default_slew_down = float(inp_cfg.get("pressure_slew_down", 0))
         default_debounce_s = float(
             inp_cfg.get("note_debounce", 0)) / 1000.0
 
@@ -2436,12 +2436,12 @@ class MidiPresetService:
                 shelf_top = default_shelf_top
 
             # Slew rates (steps/sec)
-            if "slew_up" in override:
-                slew_up = float(override["slew_up"])
+            if "pressure_slew_up" in override:
+                slew_up = float(override["pressure_slew_up"])
             else:
                 slew_up = default_slew_up
-            if "slew_down" in override:
-                slew_down = float(override["slew_down"])
+            if "pressure_slew_down" in override:
+                slew_down = float(override["pressure_slew_down"])
             else:
                 slew_down = default_slew_down
 
@@ -2915,12 +2915,12 @@ class MidiPresetService:
                             sh_lbl += (
                                 f"-{over['pressure_shelf_top']}")
                         tags.append(f"shelf={sh_lbl}")
-                    if "slew_up" in over:
+                    if "pressure_slew_up" in over:
                         tags.append(
-                            f"slew_up={over['slew_up']}")
-                    if "slew_down" in over:
+                            f"slew_up={over['pressure_slew_up']}")
+                    if "pressure_slew_down" in over:
                         tags.append(
-                            f"slew_dn={over['slew_down']}")
+                            f"slew_dn={over['pressure_slew_down']}")
                     if "note_debounce" in over:
                         tags.append(
                             f"debounce={over['note_debounce']}ms")

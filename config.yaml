@@ -40,8 +40,8 @@ routing:
     - device: "Launchpad Pro MK3 LPProMK3 MIDI"
       channels: [1,2,4,10]
       pressure_to_poly: [2,4]
-      slew_up: 0               # steps/sec — upward rate limit (0 = unlimited)
-      slew_down: 1             # steps/sec — downward rate limit (0 = unlimited)
+      pressure_slew_up: 0      # steps/sec — upward rate limit (0 = unlimited)
+      pressure_slew_down: 1   # steps/sec — downward rate limit (0 = unlimited)
       note_debounce: 30        # ms — minimum note lifetime before release
       pressure_decay: 500       # ms to reach pressure floor/shelf
       velocity_curve:
