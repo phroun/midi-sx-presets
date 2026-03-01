@@ -2588,7 +2588,10 @@ class MidiPresetService:
                     # Shelf: decay settles at shelf (above floor)
                     # until the player's pressure reaches the
                     # shelf level, which "unlocks" the floor.
-                    if shelf > 0:
+                    # Only applies when velocity is above the
+                    # shelf — a soft strike below the shelf
+                    # decays straight to the floor.
+                    if shelf > 0 and vel > shelf:
                         if (not info["shelf_unlocked"]
                                 and pressure >= shelf):
                             info["shelf_unlocked"] = True
