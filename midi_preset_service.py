@@ -2912,10 +2912,6 @@ class MidiPresetService:
                             info = active.get(pch, {}).pop(pn, None)
                             pch_opts = channel_opts.get(pch, {})
                             if info is not None and info["started"]:
-                                if pch_opts.get("p2p"):
-                                    _put(mido.Message(
-                                        "polytouch", channel=pch,
-                                        note=pn, value=0))
                                 vcc = info.get("vel_dest_cc")
                                 if vcc is not None:
                                     dch = info.get("vel_dest_ch")
@@ -3265,9 +3261,6 @@ class MidiPresetService:
                                          f" vel={info['vel']}"
                                          f" OFF last_out="
                                          f"{info['last_out']:.1f}")
-                                    _put(mido.Message(
-                                        "polytouch", channel=ch,
-                                        note=msg.note, value=0))
                                 # Send final vel-dest CC
                                 vcc = info.get("vel_dest_cc")
                                 if vcc is not None:
