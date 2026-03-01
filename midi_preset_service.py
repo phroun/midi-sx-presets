@@ -24,6 +24,7 @@ Protocol (SysEx, mfr 0x7D by default):
 Usage:
   python midi_preset_service.py [--config-dir DIR] [--list-ports]
                                 [--no-input] [--no-iac-input]
+                                [--midi-log FILE]
 """
 
 import argparse
@@ -32,6 +33,7 @@ import signal
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -101,7 +103,8 @@ class MidiPresetService:
     """Core service: listens on a virtual MIDI port for SysEx commands and
     records / recalls CC + PC presets stored as YAML."""
 
-    def __init__(self, config_dir=None, no_input=False, no_iac_input=False):
+    def __init__(self, config_dir=None, no_input=False, no_iac_input=False,
+                 midi_log_path=None):
         self.config_dir = Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -203,6 +206,15 @@ class MidiPresetService:
         # Velocity-to-pressure pending aftertouch awaiting output channel.
         # Key: (source_device, ch0, note), value: velocity (int)
         self._v2p_pending = {}
+
+        # MIDI message log file (None = disabled)
+        self._midi_log_fh = None
+        if midi_log_path:
+            try:
+                self._midi_log_fh = open(midi_log_path, "a", encoding="utf-8")
+                _log("INIT", f"MIDI log: {midi_log_path}")
+            except OSError as exc:
+                _log("WARN", f"Cannot open MIDI log file: {exc}")
 
     # -- Config / persistence -------------------------------------------------
 
@@ -918,6 +930,7 @@ class MidiPresetService:
     _POLY_PARAM_KEYS = ("max_polyphony", "fallback_priority", "replace_priority",
                         "allocation_strategy")
     _ADAPTIVE_GHOST_MAX = 10   # recent notes remembered per boundary side
+    _WALK_PROXIMITY = 4        # semitones: ghost within this range = walking
 
     @staticmethod
     def _parse_adaptive_edge(val):
@@ -1592,12 +1605,12 @@ class MidiPresetService:
     def _send_cc(self, cc, channel, value):
         """Send a mapped CC to hardware output."""
         if self.midi_out:
-            self.midi_out.send(
-                mido.Message("control_change",
-                             channel=channel,
-                             control=cc,
-                             value=value)
-            )
+            msg = mido.Message("control_change",
+                               channel=channel,
+                               control=cc,
+                               value=value)
+            self.midi_out.send(msg)
+            self._midi_log("OUT", msg)
 
     # -- Sequential step counter sync ----------------------------------------
 
@@ -1814,8 +1827,45 @@ class MidiPresetService:
                 side = "upper"
             elif lower_ok and upper_ok:
                 # Both reachable+viable — weighted decision
+                lower_held_count = len(ab["lower_held"])
+                upper_held_count = len(ab["upper_held"])
+
+                # Base: inverse distance to nearest tracked note
                 lower_score = 1.0 / max(lower_nearest, 0.5)
                 upper_score = 1.0 / max(upper_nearest, 0.5)
+
+                # Chord cohesion: holding multiple notes = strong
+                # commitment.  The hand is building a chord — keep
+                # new notes with it.
+                if lower_held_count >= 2:
+                    lower_score *= 1 + lower_held_count
+                if upper_held_count >= 2:
+                    upper_score *= 1 + upper_held_count
+
+                # Walking momentum: nearby ghost notes show recent
+                # hand activity in this region (stepwise motion).
+                wp = self._WALK_PROXIMITY
+                lower_walk = sum(
+                    1 for n in ab["lower_ghosts"]
+                    if abs(note - n) <= wp)
+                upper_walk = sum(
+                    1 for n in ab["upper_ghosts"]
+                    if abs(note - n) <= wp)
+                if lower_walk:
+                    lower_score *= 1.0 + 0.5 * lower_walk
+                if upper_walk:
+                    upper_score *= 1.0 + 0.5 * upper_walk
+
+                # Polyphony-full penalty: when a side has used all
+                # its voice slots, adding another note would steal
+                # a voice — strongly prefer the other side.
+                lower_max_p = self._side_max_poly(ab["lower_nms"])
+                upper_max_p = self._side_max_poly(ab["upper_nms"])
+                if lower_held_count >= lower_max_p:
+                    lower_score *= 0.1
+                if upper_held_count >= upper_max_p:
+                    upper_score *= 0.1
+
                 # Bias toward the note's default side
                 if default_side == "lower":
                     lower_score *= 1.5
@@ -1920,6 +1970,21 @@ class MidiPresetService:
              f"'{name}' {old_pos}/{old_pos + 1} "
              f"→ {new_pos}/{new_pos + 1} "
              f"(default {ab['default']}/{ab['default'] + 1})")
+
+    def _side_max_poly(self, nms):
+        """Effective max polyphony for a set of boundary-linked note_mappings.
+
+        Returns the max_polyphony of the first matching polyphony pool
+        found among *nms*, or 999 if none define a limit.
+        """
+        for nm in nms:
+            inst = nm.get("polyphony_instance")
+            if inst is not None:
+                params = self.poly_instances.get(inst, {})
+                return params.get("max_polyphony", 999)
+            if "max_polyphony" in nm:
+                return nm["max_polyphony"]
+        return 999
 
     def _mapping_matches(self, entry):
         """Check if an action/definition's mapping filter matches the current input.
@@ -2742,6 +2807,8 @@ class MidiPresetService:
     # -- Main message handler -------------------------------------------------
 
     def _handle_message(self, msg):
+        self._midi_log("IN", msg,
+                       source=getattr(self, "_msg_source", None))
         if msg.type == "sysex":
             if self._is_ours(msg.data):
                 self._handle_sysex(msg.data)
@@ -2873,6 +2940,19 @@ class MidiPresetService:
         """Forward a message to the hardware output (proxy mode only)."""
         if self.routing and self.midi_out:
             self.midi_out.send(msg)
+            self._midi_log("OUT", msg)
+
+    # -- MIDI message file logging -------------------------------------------
+
+    def _midi_log(self, direction, msg, source=None):
+        """Write a line to the MIDI log file if logging is enabled."""
+        fh = self._midi_log_fh
+        if fh is None:
+            return
+        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        src = f" [{source}]" if source else ""
+        fh.write(f"{ts} {direction:3s}{src} {_fmt_midi_msg(msg)}\n")
+        fh.flush()
 
     def _send_pending_vel_cc(self, msg, mapped_msgs):
         """Send a deferred velocity-destination CC (channel: target).
@@ -4038,12 +4118,38 @@ class MidiPresetService:
                 self.midi_out.close()
             if self.midi_return and self.midi_return is not self.midi_out:
                 self.midi_return.close()
+            if self._midi_log_fh:
+                self._midi_log_fh.close()
 
 
 # --- Utilities ---------------------------------------------------------------
 
 def _log(tag, message):
     print(f"[{tag:>7s}] {message}")
+
+
+def _fmt_midi_msg(msg):
+    """Human-readable MIDI message string (channels 1-based)."""
+    if msg.type == "sysex":
+        data = " ".join(f"{b:02X}" for b in msg.data[:16])
+        suffix = f"... ({len(msg.data)} bytes)" if len(msg.data) > 16 else ""
+        return f"sysex [{data}{suffix}]"
+    t = msg.type
+    if hasattr(msg, "channel"):
+        t += f" ch{msg.channel + 1}"
+    if msg.type in ("note_on", "note_off"):
+        return f"{t} note={msg.note} vel={msg.velocity}"
+    if msg.type == "control_change":
+        return f"{t} cc={msg.control} val={msg.value}"
+    if msg.type == "program_change":
+        return f"{t} pgm={msg.program}"
+    if msg.type == "pitchwheel":
+        return f"{t} bend={msg.pitch}"
+    if msg.type == "aftertouch":
+        return f"{t} pressure={msg.value}"
+    if msg.type == "polytouch":
+        return f"{t} note={msg.note} pressure={msg.value}"
+    return str(msg)
 
 
 def list_ports():
@@ -4084,6 +4190,13 @@ def main():
         action="store_true",
         help="Disable IAC input (routing.iac_input).",
     )
+    parser.add_argument(
+        "--midi-log",
+        type=str,
+        default=None,
+        metavar="FILE",
+        help="Log all incoming/outgoing MIDI messages to a text file.",
+    )
     args = parser.parse_args()
 
     if args.list_ports:
@@ -4094,7 +4207,8 @@ def main():
 
     service = MidiPresetService(config_dir=args.config_dir,
                                 no_input=args.no_input,
-                                no_iac_input=args.no_iac_input)
+                                no_iac_input=args.no_iac_input,
+                                midi_log_path=args.midi_log)
     service.run()
 
 
