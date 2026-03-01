@@ -2778,9 +2778,31 @@ class MidiPresetService:
             return cb
 
         try:
-            port = mido.open_input(
-                device,
-                callback=make_cb(ch_set, ch_opts, any_p2p, device))
+            # Open the MIDI port with a timeout — mido.open_input
+            # can block indefinitely when a USB MIDI device is in
+            # a bad state (especially multi-port devices like the
+            # Launchpad Pro MK3).
+            cb = make_cb(ch_set, ch_opts, any_p2p, device)
+            _open_result = [None, None]  # [port, exception]
+
+            def _open_port():
+                try:
+                    _open_result[0] = mido.open_input(
+                        device, callback=cb)
+                except Exception as exc:
+                    _open_result[1] = exc
+
+            opener = threading.Thread(target=_open_port, daemon=True)
+            opener.start()
+            opener.join(timeout=5.0)
+            if opener.is_alive():
+                _log("WARN",
+                     f"Timeout opening input '{device}' "
+                     f"(hung for >5 s — skipping)")
+                return
+            if _open_result[1] is not None:
+                raise _open_result[1]
+            port = _open_result[0]
             self.extra_inputs.append(port)
             ch_str = ", ".join(str(c) for c in channels) if channels else "all"
             extras = []
