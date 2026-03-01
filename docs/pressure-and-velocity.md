@@ -39,7 +39,7 @@ Raw channel aftertouch on P2P channels coming from the primary input (IAC bus) i
 
 ### Decay
 
-After note-on, the output pressure floor decays from the start value down to the pressure curve's floor over `velocity_decay` milliseconds. The actual output is `max(pressure, decay_floor)` — so the player's real-time pressure can always push above the decay floor.
+After note-on, the output pressure floor decays from the start value down to the shelf level over `velocity_decay` milliseconds (or to the pressure curve's floor if no shelf is configured). The actual output is `max(pressure, decay_floor)` — so the player's real-time pressure can always push above the decay floor.
 
 ### Shelf
 

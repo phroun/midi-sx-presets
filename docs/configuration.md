@@ -45,7 +45,7 @@ Each entry under `routing.inputs` supports:
 | `velocity_curve` | dict | Remap velocity values (see below). |
 | `pressure_curve` | dict | Remap pressure/aftertouch values (same format as velocity_curve). |
 | `pressure_to_poly` | list[int] or bool | Channels (1-based) to convert channel aftertouch → polyphonic aftertouch. `true` = all configured channels. |
-| `velocity_decay` | int | Milliseconds for pressure decay from velocity to floor after note-on. |
+| `velocity_decay` | int | Milliseconds for the pressure floor to decay from velocity down to the shelf level after note-on (or to the pressure curve floor if no shelf is configured). |
 | `pressure_shelf` | int | MIDI value (0–127). Decay holds at this level until player pressure reaches it. |
 | `pressure_shelf_top` | int | Values between `shelf` and `shelf_top` clamp to shelf (dead zone). Values above are rescaled. |
 | `pressure_slew_up` | float | Max steps/sec for upward pressure changes (0 = unlimited). |
