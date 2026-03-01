@@ -797,6 +797,40 @@ class MidiPresetService:
                     expanded.append(action)
             self.cc_mappings[source_cc] = expanded
 
+        # Propagate min/max/curve from mapping actions to destination-level
+        # params.  Without this, save/recall defaults to min=0 max=127 for
+        # destinations whose range is only specified in a mapping action,
+        # inflating or deflating the stored preset values.
+        promoted = 0
+        for _src_cc, actions in self.cc_mappings.items():
+            for action in actions:
+                target_cc = action.get("cc")
+                if target_cc is None or target_cc == 0:
+                    continue
+                # Determine target channel (must be statically known)
+                if "channel" in action:
+                    target_ch = action["channel"] - 1
+                elif "from_channel" in action:
+                    target_ch = action["from_channel"] - 1
+                else:
+                    continue  # target channel depends on runtime input
+                key = (target_ch, target_cc)
+                if "min" in action and key not in self.dest_mins \
+                        and target_cc not in self.cc_mins:
+                    self.dest_mins[key] = int(action["min"])
+                    promoted += 1
+                if "max" in action and key not in self.dest_maxs \
+                        and target_cc not in self.cc_maxs:
+                    self.dest_maxs[key] = int(action["max"])
+                    promoted += 1
+                if "curve" in action and key not in self.dest_curves \
+                        and target_cc not in self.cc_curves:
+                    self.dest_curves[key] = float(action["curve"])
+                    promoted += 1
+        if promoted:
+            _log("INIT", f"Promoted {promoted} min/max/curve value(s) "
+                 "from mapping actions to destination params")
+
         # Build seq definitions from mapping actions
         self.seq_defs = {}
         for source_cc, actions in self.cc_mappings.items():
@@ -1142,7 +1176,7 @@ class MidiPresetService:
                 del preset[key]
 
         # Partition destination_states into known (flat) and unknown (channeled)
-        # Values are converted from 14-bit internal to 7-bit output-space.
+        # Values are stored as raw 14-bit internal values (0–16383).
         unknown_channels = {}
         named_count = 0
         skipped_count = 0
@@ -1157,15 +1191,14 @@ class MidiPresetService:
             if not self._bank_allows(channel, ch, cc_num):
                 skipped_count += 1
                 continue
-            output = self._output_value(cc_num, ch, internal)
             resolved_name = self.resolved_destinations.get((ch, cc_num))
             if resolved_name is not None:
-                preset[resolved_name] = output
+                preset[resolved_name] = internal
                 named_count += 1
             else:
                 name = self._cc_num_to_name(cc_num)
                 ch_data = unknown_channels.setdefault(ch, {})
-                ch_data[name] = output
+                ch_data[name] = internal
 
         if unknown_channels:
             preset["channels"] = {ch: {"cc_values": ccs}
@@ -1175,7 +1208,7 @@ class MidiPresetService:
         if self.seq_states:
             preset["seq_states"] = dict(self.seq_states)
 
-        preset["version"] = 2
+        preset["version"] = 3
         self.presets.setdefault(channel, {})[note] = preset
         self._save_preset_to_disk(channel, note)
         self._last_preset = (channel, note)
@@ -1346,9 +1379,12 @@ class MidiPresetService:
         """Recall top-level named parameters via reverse_destinations.
 
         *bank_channel* is the 0-based bank channel used for tag filtering.
-        Values in the preset are output-space (0–127); they are sent
-        directly to MIDI and inverse-curved to set the 14-bit internal state.
+
+        v3+ presets store raw 14-bit internal values — these are converted
+        to 7-bit output-space via ``_output_value`` for MIDI transmission.
+        Older presets store 7-bit output-space values directly.
         """
+        is_v3 = preset.get("version", 1) >= 3
         for key, value in preset.items():
             if key in self._PRESET_RESERVED_KEYS:
                 continue
@@ -1356,8 +1392,9 @@ class MidiPresetService:
             if target is None:
                 continue  # unrecognized name — leave it alone
             ch, cc_num = target
-            if not isinstance(value, int):
+            if not isinstance(value, (int, float)):
                 continue
+            value = int(value)
             if (ch, cc_num) in self.recall_ignore:
                 _log("  --", f"{key} = {value}  (ignored)")
                 continue
@@ -1366,10 +1403,15 @@ class MidiPresetService:
             if not self._bank_allows(bank_channel, ch, cc_num):
                 _log("  --", f"{key} = {value}  (filtered by tags)")
                 continue
-            self._send_cc(cc_num, ch, value)
-            internal = self._inverse_output(cc_num, ch, value)
+            if is_v3:
+                internal = value
+                output = self._output_value(cc_num, ch, internal)
+            else:
+                output = value
+                internal = self._inverse_output(cc_num, ch, output)
+            self._send_cc(cc_num, ch, output)
             self._set_dest(cc_num, ch, internal)
-            _log("  ->", f"{key} = {value}  (ch{ch + 1}/CC{cc_num})")
+            _log("  ->", f"{key} = {output}  (ch{ch + 1}/CC{cc_num})")
 
     def _recall_single(self, preset, channel, bank_channel):
         """Recall a legacy preset with flat cc_values (no channel grouping).
@@ -1404,14 +1446,16 @@ class MidiPresetService:
         """Recall a preset with CCs grouped by channel.
 
         *bank_channel* is the 0-based bank channel used for tag filtering.
-        Values are output-space; inverse-curved to 14-bit internal.
+        v3+ presets store 14-bit internal values; older store 7-bit output.
         """
+        is_v3 = preset.get("version", 1) >= 3
         for ch_str, ch_data in preset["channels"].items():
             ch = int(ch_str)  # YAML may store as string
             for cc_name, value in ch_data.get("cc_values", {}).items():
                 cc_num = self._cc_name_to_number(cc_name)
                 if cc_num is None:
                     continue
+                value = int(value)
                 if (ch, cc_num) in self.recall_ignore:
                     _log("  --", f"{self._cc_label(cc_num, ch)} = {value}  (ignored)")
                     continue
@@ -1420,10 +1464,15 @@ class MidiPresetService:
                 if not self._bank_allows(bank_channel, ch, cc_num):
                     _log("  --", f"{self._cc_label(cc_num, ch)} = {value}  (filtered by tags)")
                     continue
-                self._send_cc(cc_num, ch, value)
-                internal = self._inverse_output(cc_num, ch, value)
+                if is_v3:
+                    internal = value
+                    output = self._output_value(cc_num, ch, internal)
+                else:
+                    output = value
+                    internal = self._inverse_output(cc_num, ch, output)
+                self._send_cc(cc_num, ch, output)
                 self._set_dest(cc_num, ch, internal)
-                _log("  ->", f"{self._cc_label(cc_num, ch)} = {value}")
+                _log("  ->", f"{self._cc_label(cc_num, ch)} = {output}")
 
     # -- CC Mapping Engine ----------------------------------------------------
 
