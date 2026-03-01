@@ -110,19 +110,35 @@ class MidiPresetService:
          self.cc_default_set,
          self.cc_set_defaults,
          self.cc_set_tags,
-         self.cc_set_explicit_tags) = self._load_cc_sets()
+         self.cc_set_explicit_tags,
+         self.cc_set_curves,
+         self.cc_set_mins,
+         self.cc_set_maxs) = self._load_cc_sets()
         self.destinations_map = self._load_destinations()
         (self.resolved_destinations,
          self.reverse_destinations,
          self.auto_destinations,
          self.dest_defaults,
-         self.dest_tags) = self._resolve_destinations()
+         self.dest_tags,
+         self.dest_curves,
+         self.dest_mins,
+         self.dest_maxs) = self._resolve_destinations()
         self.bank_tags = self._load_bank_tags()
         # Flat CC-number → default, merged from all sets (fallback when
         # destinations aren't configured).
         self.cc_defaults = {}
         for defs in self.cc_set_defaults.values():
             self.cc_defaults.update(defs)
+        # Flat CC-number → curve/min/max, merged from all sets (fallback)
+        self.cc_curves = {}
+        for crvs in self.cc_set_curves.values():
+            self.cc_curves.update(crvs)
+        self.cc_mins = {}
+        for mns in self.cc_set_mins.values():
+            self.cc_mins.update(mns)
+        self.cc_maxs = {}
+        for mxs in self.cc_set_maxs.values():
+            self.cc_maxs.update(mxs)
         self.recall_ignore = self._build_recall_ignore()
         self.presets = self._load_presets()
 
@@ -185,12 +201,18 @@ class MidiPresetService:
     def _state_path(self):
         return self.config_dir / STATE_FILENAME
 
+    _STATE_VERSION = 2   # current version for state file format
+
     def _load_state(self):
         """Restore runtime state from the persistent state file.
 
         Populates ``destination_states``, ``preset_cursor``,
         ``intercept_mode``, ``shift_state``, and ``load_mode``
         from the last saved snapshot so a restart feels seamless.
+
+        Version migration: state files without ``version`` (or version < 2)
+        store destination values in 7-bit (0–127).  These are scaled up to
+        14-bit internal representation.
         """
         path = self._state_path()
         if not path.exists():
@@ -198,13 +220,24 @@ class MidiPresetService:
         data = _yaml_load(path)
         if not isinstance(data, dict):
             return
+        state_version = data.get("version", 1)
         # Destination values — the core mixer state
         saved_dests = data.get("destination_states")
         if isinstance(saved_dests, dict):
-            self.destination_states.update(
-                {k: int(v) for k, v in saved_dests.items()
-                 if isinstance(v, (int, float))}
-            )
+            if state_version < 2:
+                # V1 state: values are 7-bit (0–127) — scale to 14-bit
+                self.destination_states.update(
+                    {k: round(int(v) * self._SCALE)
+                     for k, v in saved_dests.items()
+                     if isinstance(v, (int, float))}
+                )
+                _log("INIT", "Migrated destination_states from v1 (7-bit) "
+                     "to v2 (14-bit)")
+            else:
+                self.destination_states.update(
+                    {k: int(v) for k, v in saved_dests.items()
+                     if isinstance(v, (int, float))}
+                )
         # Preset cursor — now a {channel: note} dict (migrate from legacy scalar)
         saved_cursor = data.get("preset_cursor")
         if isinstance(saved_cursor, dict):
@@ -234,6 +267,7 @@ class MidiPresetService:
     def _save_state(self):
         """Dump current runtime state to disk (atomic write)."""
         data = {
+            "version": self._STATE_VERSION,
             "destination_states": dict(self.destination_states),
             "seq_states": dict(self.seq_states),
             "preset_cursor": self.preset_cursor,
@@ -278,13 +312,15 @@ class MidiPresetService:
     def _normalize_cc_set(raw_set, group_tags=None):
         """Normalise a CC name set.
 
-        Returns ``(names_dict, defaults_dict, tags_dict, explicit_tag_ccs)``.
+        Returns ``(names_dict, defaults_dict, tags_dict, explicit_tag_ccs,
+        curves_dict, mins_dict, maxs_dict)``.
 
         Entries may be plain strings or dicts with ``name`` and optional
-        ``default`` and ``tags``::
+        ``default``, ``tags``, ``curve``, ``min``, ``max``::
 
             3: to_duck_out               # plain string, no default/tags
             7: {name: to_perf_filter, default: 127, tags: [mix]}
+            94: {name: vibrato_depth, default: 0, min: 0, max: 48, curve: 2.0}
 
         *group_tags* (list or None) are inherited by every entry in the set.
         Per-entry tags **replace** group_tags.  Entries with no tags at all
@@ -297,6 +333,9 @@ class MidiPresetService:
         defaults = {}
         tags = {}
         explicit_tag_ccs = set()
+        curves = {}
+        mins = {}
+        maxs = {}
         base_tags = set(group_tags) if group_tags else set()
         for cc_num, entry in (raw_set or {}).items():
             cc_num = int(cc_num)
@@ -304,6 +343,12 @@ class MidiPresetService:
                 names[cc_num] = str(entry["name"])
                 if "default" in entry:
                     defaults[cc_num] = int(entry["default"])
+                if "curve" in entry:
+                    curves[cc_num] = float(entry["curve"])
+                if "min" in entry:
+                    mins[cc_num] = int(entry["min"])
+                if "max" in entry:
+                    maxs[cc_num] = int(entry["max"])
                 entry_tags = entry.get("tags")
                 if entry_tags:
                     tags[cc_num] = set(entry_tags)
@@ -315,13 +360,13 @@ class MidiPresetService:
             else:
                 names[cc_num] = str(entry)
                 tags[cc_num] = set(base_tags) if base_tags else {"default"}
-        return names, defaults, tags, explicit_tag_ccs
+        return names, defaults, tags, explicit_tag_ccs, curves, mins, maxs
 
     def _load_cc_sets(self):
         """Load CC name mappings.
 
         Returns ``(name_sets, default_names, cc_set_defaults, cc_set_tags,
-        cc_set_explicit_tags)``.
+        cc_set_explicit_tags, cc_set_curves, cc_set_mins, cc_set_maxs)``.
 
         *name_sets* and *default_names* are string-only dicts as before.
         *cc_set_defaults* maps ``set_name → {cc_num: default_value}``
@@ -331,6 +376,8 @@ class MidiPresetService:
         untagged entries inherit group tags or get ``{"default"}``).
         *cc_set_explicit_tags* maps ``set_name → set_of_cc_nums``
         for CCs that had explicit per-entry tags in the cc_set.
+        *cc_set_curves/mins/maxs* map ``set_name → {cc_num: value}``
+        for entries that specified ``curve``, ``min``, or ``max``.
 
         Named sets may carry a ``tags`` key at the group level::
 
@@ -369,13 +416,16 @@ class MidiPresetService:
                     cc_set_defaults = {}
                     cc_set_tags = {}
                     cc_set_explicit = {}
+                    cc_set_curves = {}
+                    cc_set_mins = {}
+                    cc_set_maxs = {}
                     for set_name, raw_set in raw.items():
                         # Extract group-level tags before normalizing
                         group_tags = None
                         if isinstance(raw_set, dict):
                             group_tags = raw_set.pop("tags", None)
-                        names, defs, tags, explicit = self._normalize_cc_set(
-                            raw_set, group_tags=group_tags)
+                        names, defs, tags, explicit, crvs, mns, mxs = \
+                            self._normalize_cc_set(raw_set, group_tags=group_tags)
                         name_sets[set_name] = names
                         if defs:
                             cc_set_defaults[set_name] = defs
@@ -383,16 +433,28 @@ class MidiPresetService:
                             cc_set_tags[set_name] = tags
                         if explicit:
                             cc_set_explicit[set_name] = explicit
+                        if crvs:
+                            cc_set_curves[set_name] = crvs
+                        if mns:
+                            cc_set_mins[set_name] = mns
+                        if mxs:
+                            cc_set_maxs[set_name] = mxs
                     return (name_sets, name_sets.get("default", {}),
-                            cc_set_defaults, cc_set_tags, cc_set_explicit)
+                            cc_set_defaults, cc_set_tags, cc_set_explicit,
+                            cc_set_curves, cc_set_mins, cc_set_maxs)
                 else:
                     # Flat format — single set
-                    names, defs, tags, explicit = self._normalize_cc_set(raw)
+                    names, defs, tags, explicit, crvs, mns, mxs = \
+                        self._normalize_cc_set(raw)
                     cc_set_defaults = {"default": defs} if defs else {}
                     cc_set_tags = {"default": tags} if tags else {}
                     cc_set_explicit = {"default": explicit} if explicit else {}
+                    cc_set_curves = {"default": crvs} if crvs else {}
+                    cc_set_mins = {"default": mns} if mns else {}
+                    cc_set_maxs = {"default": mxs} if mxs else {}
                     return ({"default": names}, names,
-                            cc_set_defaults, cc_set_tags, cc_set_explicit)
+                            cc_set_defaults, cc_set_tags, cc_set_explicit,
+                            cc_set_curves, cc_set_mins, cc_set_maxs)
         # Create default file (flat format)
         default_names = {
             1: "modulation",
@@ -403,12 +465,13 @@ class MidiPresetService:
             74: "filter_cutoff",
         }
         _yaml_dump({"cc_sets": default_names}, path)
-        return {"default": default_names}, default_names, {}, {}, {}
+        return {"default": default_names}, default_names, {}, {}, {}, {}, {}, {}
 
     _DEST_RESERVED_KEYS   = {"prefix", "channels"}
     _CH_RESERVED_KEYS     = {"cc_group", "prefix", "tags"}
     _PRESET_RESERVED_KEYS = {"name", "read_only", "channels",
-                             "program_change", "cc_values", "seq_states"}
+                             "program_change", "cc_values", "seq_states",
+                             "version"}
 
     def _load_destinations(self):
         """Load the optional destinations map (destinations.yaml).
@@ -445,13 +508,17 @@ class MidiPresetService:
           3. Check for name conflicts across all destinations.
           4. Collect per-(channel, cc) defaults from cc_set_defaults.
           5. Propagate per-(channel, cc) tags from cc_set_tags + overrides.
+          6. Propagate per-(channel, cc) curves/mins/maxs.
 
-        Returns a tuple of five flat dicts:
+        Returns a tuple of eight flat dicts:
           forward:       ``{(channel, cc_num): name}``
           reverse:       ``{name: (channel, cc_num)}``
           auto:          ``{unprefixed_name: [(channel, cc_num), ...]}``
           dest_defaults: ``{(channel, cc_num): default_value}``
           dest_tags:     ``{(channel, cc_num): set_of_tags}``
+          dest_curves:   ``{(channel, cc_num): float}``
+          dest_mins:     ``{(channel, cc_num): int}``
+          dest_maxs:     ``{(channel, cc_num): int}``
         Logs warnings for every conflict found.
         """
         forward  = {}   # (ch, cc_num) -> name
@@ -459,6 +526,9 @@ class MidiPresetService:
         auto     = {}   # unprefixed_name -> [(ch, cc_num), ...]
         defaults = {}   # (ch, cc_num) -> default value
         tags     = {}   # (ch, cc_num) -> set of tag strings
+        curves   = {}   # (ch, cc_num) -> float
+        mins     = {}   # (ch, cc_num) -> int
+        maxs     = {}   # (ch, cc_num) -> int
         for dest_id, dest_cfg in self.destinations_map.items():
             prefix = dest_cfg.get("prefix", "")
             channels_cfg = dest_cfg.get("channels", {})
@@ -477,6 +547,12 @@ class MidiPresetService:
                                   if group_name else {})
                 group_tags = (self.cc_set_tags.get(group_name, {})
                               if group_name else {})
+                group_curves = (self.cc_set_curves.get(group_name, {})
+                                if group_name else {})
+                group_mins = (self.cc_set_mins.get(group_name, {})
+                              if group_name else {})
+                group_maxs = (self.cc_set_maxs.get(group_name, {})
+                              if group_name else {})
                 # Channel-level tags override the cc_set's inherited tags
                 # but leave per-entry explicit tags from the cc_set alone.
                 ch_level_tags = ch_cfg.get("tags")
@@ -491,6 +567,13 @@ class MidiPresetService:
                         # Propagate default from cc_set
                         if cc_num in group_defaults:
                             defaults[(ch, cc_num)] = group_defaults[cc_num]
+                        # Propagate curve/min/max from cc_set
+                        if cc_num in group_curves:
+                            curves[(ch, cc_num)] = group_curves[cc_num]
+                        if cc_num in group_mins:
+                            mins[(ch, cc_num)] = group_mins[cc_num]
+                        if cc_num in group_maxs:
+                            maxs[(ch, cc_num)] = group_maxs[cc_num]
                         # Propagate tags: channel-level tags override inherited,
                         # but explicit per-entry tags from cc_set are kept.
                         if ch_level_tags and cc_num not in explicit_ccs:
@@ -522,6 +605,12 @@ class MidiPresetService:
                             ch_names[cc_num] = str(value["name"])
                         if "default" in value:
                             defaults[(ch, cc_num)] = int(value["default"])
+                        if "curve" in value:
+                            curves[(ch, cc_num)] = float(value["curve"])
+                        if "min" in value:
+                            mins[(ch, cc_num)] = int(value["min"])
+                        if "max" in value:
+                            maxs[(ch, cc_num)] = int(value["max"])
                         # Per-CC override tags replace inherited tags
                         override_tags = value.get("tags")
                         if override_tags:
@@ -556,7 +645,7 @@ class MidiPresetService:
         tag_count = sum(1 for t in tags.values() if t != {"default"})
         if tag_count:
             _log("INIT", f"CC tags: {tag_count} entries with non-default tags")
-        return forward, reverse, auto, defaults, tags
+        return forward, reverse, auto, defaults, tags, curves, mins, maxs
 
     def _build_recall_ignore(self):
         """Build a set of (channel, cc_num) pairs to skip during preset recall.
@@ -752,7 +841,7 @@ class MidiPresetService:
         # Runtime state for the mapping engine
         self.shift_state = 0            # 16-bit bitmask
         self.joystick_states = {}       # index -> {neg_held, pos_held, latch}
-        self.destination_states = {}    # "cc_ch" -> current value
+        self.destination_states = {}    # "cc_ch" -> 14-bit internal value (0-16383)
         self._map_log_times = {}        # "cc_ch" -> last log timestamp (debounce)
         self.poly_states = {}           # pool_key -> {held: [...], active: [...]}
         self.note_on_origins = {}       # (ch0, note) -> origin info for note-off routing
@@ -946,10 +1035,11 @@ class MidiPresetService:
                 del preset[key]
 
         # Partition destination_states into known (flat) and unknown (channeled)
+        # Values are converted from 14-bit internal to 7-bit output-space.
         unknown_channels = {}
         named_count = 0
         skipped_count = 0
-        for key, value in self.destination_states.items():
+        for key, internal in self.destination_states.items():
             parts = key.split("_")
             cc_num, ch = int(parts[0]), int(parts[1])
             if cc_num == 0:
@@ -960,14 +1050,15 @@ class MidiPresetService:
             if not self._bank_allows(channel, ch, cc_num):
                 skipped_count += 1
                 continue
+            output = self._output_value(cc_num, ch, internal)
             resolved_name = self.resolved_destinations.get((ch, cc_num))
             if resolved_name is not None:
-                preset[resolved_name] = value
+                preset[resolved_name] = output
                 named_count += 1
             else:
                 name = self._cc_num_to_name(cc_num)
                 ch_data = unknown_channels.setdefault(ch, {})
-                ch_data[name] = value
+                ch_data[name] = output
 
         if unknown_channels:
             preset["channels"] = {ch: {"cc_values": ccs}
@@ -977,6 +1068,7 @@ class MidiPresetService:
         if self.seq_states:
             preset["seq_states"] = dict(self.seq_states)
 
+        preset["version"] = 2
         self.presets.setdefault(channel, {})[note] = preset
         self._save_preset_to_disk(channel, note)
         self._last_preset = (channel, note)
@@ -1147,6 +1239,8 @@ class MidiPresetService:
         """Recall top-level named parameters via reverse_destinations.
 
         *bank_channel* is the 0-based bank channel used for tag filtering.
+        Values in the preset are output-space (0–127); they are sent
+        directly to MIDI and inverse-curved to set the 14-bit internal state.
         """
         for key, value in preset.items():
             if key in self._PRESET_RESERVED_KEYS:
@@ -1166,13 +1260,15 @@ class MidiPresetService:
                 _log("  --", f"{key} = {value}  (filtered by tags)")
                 continue
             self._send_cc(cc_num, ch, value)
-            self._set_dest(cc_num, ch, value)
+            internal = self._inverse_output(cc_num, ch, value)
+            self._set_dest(cc_num, ch, internal)
             _log("  ->", f"{key} = {value}  (ch{ch + 1}/CC{cc_num})")
 
     def _recall_single(self, preset, channel, bank_channel):
         """Recall a legacy preset with flat cc_values (no channel grouping).
 
         *bank_channel* is the 0-based bank channel used for tag filtering.
+        Values are output-space; inverse-curved to 14-bit internal.
         """
         pc = preset.get("program_change")
         if pc is not None:
@@ -1193,13 +1289,15 @@ class MidiPresetService:
                 _log("  --", f"{self._cc_label(cc_num, channel)} = {value}  (filtered by tags)")
                 continue
             self._send_cc(cc_num, channel, value)
-            self._set_dest(cc_num, channel, value)
+            internal = self._inverse_output(cc_num, channel, value)
+            self._set_dest(cc_num, channel, internal)
             _log("  ->", f"{self._cc_label(cc_num, channel)} = {value}")
 
     def _recall_channeled(self, preset, bank_channel):
         """Recall a preset with CCs grouped by channel.
 
         *bank_channel* is the 0-based bank channel used for tag filtering.
+        Values are output-space; inverse-curved to 14-bit internal.
         """
         for ch_str, ch_data in preset["channels"].items():
             ch = int(ch_str)  # YAML may store as string
@@ -1216,7 +1314,8 @@ class MidiPresetService:
                     _log("  --", f"{self._cc_label(cc_num, ch)} = {value}  (filtered by tags)")
                     continue
                 self._send_cc(cc_num, ch, value)
-                self._set_dest(cc_num, ch, value)
+                internal = self._inverse_output(cc_num, ch, value)
+                self._set_dest(cc_num, ch, internal)
                 _log("  ->", f"{self._cc_label(cc_num, ch)} = {value}")
 
     # -- CC Mapping Engine ----------------------------------------------------
@@ -1229,6 +1328,11 @@ class MidiPresetService:
             return -(128 - value)
         return 0
 
+    # -- 14-bit internal resolution --------------------------------------------
+
+    _INTERNAL_MAX = 16383          # 2^14 - 1
+    _SCALE = _INTERNAL_MAX / 127   # ≈ 129.0
+
     def _dest_key(self, cc, channel):
         return f"{cc}_{channel}"
 
@@ -1239,33 +1343,110 @@ class MidiPresetService:
             return f"CC{cc} ch{channel + 1} \"{name}\""
         return f"CC{cc} ch{channel + 1}"
 
+    def _resolve_dest_params(self, cc, channel, action=None):
+        """Resolve curve/min/max for a destination.
+
+        Fallback chain: dest_(ch,cc) → cc_set(cc) → action → defaults.
+        """
+        key = (channel, cc)
+        if key in self.dest_curves:
+            curve = self.dest_curves[key]
+        elif cc in self.cc_curves:
+            curve = self.cc_curves[cc]
+        elif action and "curve" in action:
+            curve = float(action["curve"])
+        else:
+            curve = 1.0
+        if key in self.dest_mins:
+            min_v = self.dest_mins[key]
+        elif cc in self.cc_mins:
+            min_v = self.cc_mins[cc]
+        elif action and "min" in action:
+            min_v = int(action["min"])
+        else:
+            min_v = 0
+        if key in self.dest_maxs:
+            max_v = self.dest_maxs[key]
+        elif cc in self.cc_maxs:
+            max_v = self.cc_maxs[cc]
+        elif action and "max" in action:
+            max_v = int(action["max"])
+        else:
+            max_v = 127
+        return curve, min_v, max_v
+
+    def _output_value(self, cc, channel, internal, curve=None, min_v=None, max_v=None):
+        """Convert 14-bit internal value to 7-bit output via curve/min/max.
+
+        If curve/min_v/max_v are not supplied, they are resolved from the
+        destination's configured parameters.
+        """
+        if curve is None or min_v is None or max_v is None:
+            c, mn, mx = self._resolve_dest_params(cc, channel)
+            if curve is None:
+                curve = c
+            if min_v is None:
+                min_v = mn
+            if max_v is None:
+                max_v = mx
+        if min_v == max_v:
+            return min_v
+        norm = internal / self._INTERNAL_MAX
+        curved = norm ** curve if curve != 1.0 else norm
+        output = round(min_v + (max_v - min_v) * curved)
+        return max(min_v, min(max_v, output))
+
+    def _inverse_output(self, cc, channel, output_val, curve=None, min_v=None, max_v=None):
+        """Convert a 7-bit output-space value back to 14-bit internal."""
+        if curve is None or min_v is None or max_v is None:
+            c, mn, mx = self._resolve_dest_params(cc, channel)
+            if curve is None:
+                curve = c
+            if min_v is None:
+                min_v = mn
+            if max_v is None:
+                max_v = mx
+        if min_v == max_v:
+            return 0
+        norm_out = (output_val - min_v) / (max_v - min_v)
+        norm_out = max(0.0, min(1.0, norm_out))
+        if curve != 1.0 and norm_out > 0:
+            norm_in = norm_out ** (1.0 / curve)
+        else:
+            norm_in = norm_out
+        return round(norm_in * self._INTERNAL_MAX)
+
     def _init_dest(self, cc, channel, default):
+        """Initialise destination to *default* (output-space) if not yet set."""
         key = self._dest_key(cc, channel)
         if key not in self.destination_states:
-            self.destination_states[key] = default
+            self.destination_states[key] = self._inverse_output(cc, channel, default)
         return key
 
     def _get_dest(self, cc, channel):
+        """Return the raw 14-bit internal value for a destination."""
         return self.destination_states.get(self._dest_key(cc, channel), 0)
 
-    def _set_dest(self, cc, channel, value, min_v=0, max_v=127):
+    def _set_dest(self, cc, channel, internal, min_v=0, max_v=_INTERNAL_MAX):
+        """Set a destination's 14-bit internal value, clamped to [min_v, max_v]."""
         key = self._dest_key(cc, channel)
-        value = max(min_v, min(max_v, value))
-        self.destination_states[key] = value
+        internal = max(min_v, min(max_v, internal))
+        self.destination_states[key] = internal
         self._mark_dirty()
-        return value
+        return internal
 
     def _boot_sync(self):
         """Populate missing destinations from defaults and send all to hardware.
 
         Called once after MIDI ports are opened so the hardware matches
         the service's internal state from the very first moment.
+        Defaults are output-space values; they are inverse-curved to 14-bit.
         """
         filled = 0
         for (ch, cc_num), default in self.dest_defaults.items():
             key = self._dest_key(cc_num, ch)
             if key not in self.destination_states:
-                self.destination_states[key] = default
+                self.destination_states[key] = self._inverse_output(cc_num, ch, default)
                 filled += 1
         if filled:
             _log("BOOT", f"Filled {filled} destination(s) from defaults")
@@ -1283,12 +1464,16 @@ class MidiPresetService:
             _log("BOOT", f"Synced {len(self.seq_states)} seq state(s)")
 
     def _sync_all_destinations(self):
-        """Re-send all current destination values (e.g. after MIDI reset)."""
+        """Re-send all current destination values (e.g. after MIDI reset).
+
+        Internal 14-bit values are converted to 7-bit output via curve.
+        """
         count = 0
-        for key, value in self.destination_states.items():
+        for key, internal in self.destination_states.items():
             parts = key.split("_")
             cc_num, channel = int(parts[0]), int(parts[1])
-            self._send_cc(cc_num, channel, value)
+            output = self._output_value(cc_num, channel, internal)
+            self._send_cc(cc_num, channel, output)
             count += 1
         _log("SYNC", f"Re-sent {count} destination(s)")
 
@@ -1356,12 +1541,12 @@ class MidiPresetService:
     _CENTER_VALUE = 63          # value to snap to
 
     def _update_center_tracker(self, dest_key, delta, target_cc, target_ch,
-                               min_v, max_v, center_value=None):
+                               curve, min_v, max_v, center_value=None):
         """Track encoder direction changes for a center-enabled destination.
 
         Called after each relative movement.  When 4+ direction reversals
         happen within 2 s and then the encoder stops, snaps to *center_value*
-        (defaults to ``_CENTER_VALUE``).
+        (output-space, defaults to ``_CENTER_VALUE``).
         Consistent single-direction movement for 1 s resets the tracker.
         """
         if center_value is None:
@@ -1407,10 +1592,10 @@ class MidiPresetService:
 
         # (Re)start the idle timer — if encoder stops while armed, snap
         self._restart_center_timer(dest_key, target_cc, target_ch,
-                                   min_v, max_v, center_value)
+                                   curve, min_v, max_v, center_value)
 
     def _restart_center_timer(self, dest_key, target_cc, target_ch,
-                              min_v, max_v, center_value):
+                              curve, min_v, max_v, center_value):
         """Cancel any pending idle timer and start a fresh one."""
         old = self._center_timers.pop(dest_key, None)
         if old is not None:
@@ -1418,14 +1603,15 @@ class MidiPresetService:
         t = threading.Timer(
             self._CENTER_IDLE,
             self._center_idle_fired,
-            args=(dest_key, target_cc, target_ch, min_v, max_v, center_value),
+            args=(dest_key, target_cc, target_ch, curve, min_v, max_v,
+                  center_value),
         )
         t.daemon = True
         t.start()
         self._center_timers[dest_key] = t
 
     def _center_idle_fired(self, dest_key, target_cc, target_ch,
-                           min_v, max_v, center_value):
+                           curve, min_v, max_v, center_value):
         """Called from timer thread when encoder has been idle."""
         self._center_timers.pop(dest_key, None)
         tr = self._center_trackers.get(dest_key)
@@ -1434,13 +1620,15 @@ class MidiPresetService:
             self._reset_center_tracker(dest_key)
             return
 
-        # Snap to center
-        center = max(min_v, min(max_v, center_value))
-        self._set_dest(target_cc, target_ch, center, min_v, max_v)
-        self._send_cc(target_cc, target_ch, center)
+        # Snap to center (center_value is output-space)
+        center_out = max(min_v, min(max_v, center_value))
+        internal = self._inverse_output(target_cc, target_ch, center_out,
+                                        curve, min_v, max_v)
+        self._set_dest(target_cc, target_ch, internal)
+        self._send_cc(target_cc, target_ch, center_out)
         name = (self.resolved_destinations.get((target_ch, target_cc))
                 or f"CC{target_cc} ch{target_ch + 1}")
-        _log("CENTER", f"{name} → {center}")
+        _log("CENTER", f"{name} → {center_out}")
         self._reset_center_tracker(dest_key)
 
     def _reset_center_tracker(self, dest_key):
@@ -1597,32 +1785,48 @@ class MidiPresetService:
                 default_val = self.cc_defaults[target_cc]
             else:
                 default_val = 64 if action_type == "relative" else 0
-            min_v = action.get("min", 0)
-            max_v = action.get("max", 127)
+
+            # Resolve curve/min/max via fallback chain
+            curve, min_v, max_v = self._resolve_dest_params(
+                target_cc, target_ch, action)
 
             self._init_dest(target_cc, target_ch, default_val)
 
             if action_type == "relative":
                 delta = self._decode_relative(msg.value)
+                sensitivity = action.get("sensitivity", 1.0)
+                step = round(sensitivity * self._SCALE)
                 current = self._get_dest(target_cc, target_ch)
-                output = self._set_dest(target_cc, target_ch, current + delta, min_v, max_v)
+                internal = self._set_dest(target_cc, target_ch,
+                                          current + delta * step)
+                output = self._output_value(target_cc, target_ch, internal,
+                                            curve, min_v, max_v)
             else:
                 delta = None
-                output = self._set_dest(target_cc, target_ch, msg.value, min_v, max_v)
+                internal = self._inverse_output(target_cc, target_ch,
+                                                msg.value, curve, min_v, max_v)
+                internal = self._set_dest(target_cc, target_ch, internal)
+                output = self._output_value(target_cc, target_ch, internal,
+                                            curve, min_v, max_v)
 
             self._send_cc(target_cc, target_ch, output)
 
             # Center-snap: track encoder wiggle for center-enabled actions
-            # center: true → snap to _CENTER_VALUE (63)
-            # center: <int> → snap to that value
+            # center: true → snap to midpoint of [min_v, max_v]
+            # center: <int> → snap to that output-space value
             center_cfg = action.get("center")
             if center_cfg and delta:
-                center_val = (int(center_cfg) if isinstance(center_cfg, int)
-                              else None)
+                if isinstance(center_cfg, bool):
+                    # true → midpoint of output range
+                    center_val = (min_v + max_v) // 2
+                elif isinstance(center_cfg, int):
+                    center_val = center_cfg
+                else:
+                    center_val = (min_v + max_v) // 2
                 dest_key = self._dest_key(target_cc, target_ch)
                 self._update_center_tracker(dest_key, delta,
                                             target_cc, target_ch,
-                                            min_v, max_v, center_val)
+                                            curve, min_v, max_v, center_val)
 
             # Debug: show mapping result (debounced)
             name = (self.resolved_destinations.get(
