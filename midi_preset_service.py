@@ -195,6 +195,9 @@ class MidiPresetService:
         # Velocity-destination pending CCs awaiting target channel resolution.
         # Key: (source_device, ch0, note), value: {"cc", "value"}
         self._vel_dest_pending = {}
+        # Velocity-to-pressure pending aftertouch awaiting output channel.
+        # Key: (source_device, ch0, note), value: velocity (int)
+        self._v2p_pending = {}
 
     # -- Config / persistence -------------------------------------------------
 
@@ -2463,10 +2466,12 @@ class MidiPresetService:
             mapped = self._process_note_mapping(msg)
             if mapped is not None:
                 self._send_pending_vel_cc(msg, mapped)
+                self._send_v2p_aftertouch(msg, mapped)
                 for m in mapped:
                     self._forward(m)
                 return
             self._send_pending_vel_cc(msg, [msg])
+            self._send_v2p_aftertouch(msg, [msg])
             self._forward(msg)
             return
 
@@ -2581,6 +2586,26 @@ class MidiPresetService:
             "control_change", channel=dest_ch,
             control=pend["cc"], value=pend["value"]))
 
+    def _send_v2p_aftertouch(self, msg, mapped_msgs):
+        """Send a velocity-to-pressure aftertouch before the note-on.
+
+        Called from _handle_message after _process_note_mapping has
+        resolved the target channel.  Sends a channel aftertouch
+        (pressure) message set to the note's velocity so the synth's
+        pressure state is initialised before the note sounds.
+        """
+        src = getattr(self, "_msg_source", None)
+        key = (src, msg.channel, msg.note)
+        vel = self._v2p_pending.pop(key, None)
+        if vel is None:
+            return
+        sent = set()
+        for m in mapped_msgs:
+            if m.channel not in sent:
+                self._forward(mido.Message(
+                    "aftertouch", channel=m.channel, value=vel))
+                sent.add(m.channel)
+
     # -- Extra input helpers ---------------------------------------------------
 
     @staticmethod
@@ -2613,10 +2638,10 @@ class MidiPresetService:
         with keys ``vtable``, ``ptable``, ``p2p`` (bool),
         ``decay_s`` (float), ``shelf`` (int), ``shelf_top`` (int),
         ``slew_up`` (float, steps/sec), ``slew_down`` (float,
-        steps/sec), ``debounce_s`` (float).  ``ptable`` is an
-        optional 128-entry lookup table for pressure values (same
-        format as ``vtable``).  Channels without any options are
-        omitted.
+        steps/sec), ``debounce_s`` (float), ``v2p`` (bool).
+        ``ptable`` is an optional 128-entry lookup table for pressure
+        values (same format as ``vtable``).  Channels without any
+        options are omitted.
 
         Device-level ``velocity_curve``, ``pressure_curve``,
         ``pressure_to_poly``, ``velocity_decay``,
@@ -2624,7 +2649,8 @@ class MidiPresetService:
         ``pressure_slew_up``, ``pressure_slew_down``,
         ``note_debounce``, ``pressure_start``,
         ``pressure_start_decay``, ``velocity_destination``,
-        ``velocity_shelf`` and ``replace_note_velocity``
+        ``velocity_shelf``, ``replace_note_velocity``,
+        and ``velocity_to_pressure``
         act as defaults; ``per_channel`` entries
         (keyed by 1-based channel number in the YAML) override
         them.
@@ -2694,6 +2720,7 @@ class MidiPresetService:
         default_vel_shelf = int(inp_cfg.get("velocity_shelf", 0))
         _rvn = inp_cfg.get("replace_note_velocity")
         default_replace_vel = int(_rvn) if _rvn is not None else None
+        default_v2p = bool(inp_cfg.get("velocity_to_pressure", False))
 
         # Determine every channel that needs an entry
         active_chs = ch_set if ch_set is not None else set(range(16))
@@ -2792,6 +2819,10 @@ class MidiPresetService:
                                if _orv is not None else None)
             else:
                 replace_vel = default_replace_vel
+            if "velocity_to_pressure" in override:
+                v2p = bool(override["velocity_to_pressure"])
+            else:
+                v2p = default_v2p
 
             opts[ch0] = {"vtable": vtable, "ptable": ptable,
                          "p2p": p2p,
@@ -2805,7 +2836,8 @@ class MidiPresetService:
                          "ps_decay_s": ps_decay_s,
                          "vel_dest": vel_dest,
                          "vel_shelf": vel_shelf,
-                         "replace_vel": replace_vel}
+                         "replace_vel": replace_vel,
+                         "v2p": v2p}
 
         return opts
 
@@ -2826,6 +2858,7 @@ class MidiPresetService:
         any_p2p = any(o["p2p"] for o in ch_opts.values())
         any_debounce = any(o["debounce_s"] > 0 for o in ch_opts.values())
         any_vel_dest = any(o["vel_dest"] for o in ch_opts.values())
+        any_v2p = any(o.get("v2p") for o in ch_opts.values())
 
         # Register P2P channels so the main handler can suppress raw
         # channel aftertouch that leaks through the primary input
@@ -2835,7 +2868,7 @@ class MidiPresetService:
             ch0 for ch0, o in ch_opts.items() if o["p2p"])
 
         def make_cb(ch_filter, channel_opts, has_p2p,
-                    has_debounce, has_vel_dest, source):
+                    has_debounce, has_vel_dest, has_v2p, source):
             # Per-device note tracker:
             #   active[ch][note] = {"vel", "started", "start_t",
             #                       "last_out", "last_out_t",
@@ -3109,6 +3142,15 @@ class MidiPresetService:
                 if vtable is not None and hasattr(msg, "velocity"):
                     msg = msg.copy(velocity=vtable[msg.velocity])
 
+                # Velocity-to-pressure: queue aftertouch before note-on.
+                # Stored here (after vtable, before replace_vel) so it
+                # uses the curve-mapped velocity.  Consumed by
+                # _send_v2p_aftertouch() after output channel is resolved.
+                if (has_v2p and copts.get("v2p")
+                        and msg.type == "note_on" and msg.velocity > 0):
+                    self._v2p_pending[
+                        (source, ch, msg.note)] = msg.velocity
+
                 # Track notes for debounce + pressure-to-poly
                 if active is not None and ch is not None:
                     with p2p_lock:
@@ -3281,7 +3323,8 @@ class MidiPresetService:
             # a bad state (especially multi-port devices like the
             # Launchpad Pro MK3).
             cb = make_cb(ch_set, ch_opts, any_p2p,
-                         any_debounce, any_vel_dest, device)
+                         any_debounce, any_vel_dest, any_v2p,
+                         device)
             _open_result = [None, None]  # [port, exception]
 
             def _open_port():
@@ -3409,6 +3452,8 @@ class MidiPresetService:
             rvn = inp_cfg.get("replace_note_velocity")
             if rvn is not None:
                 extras.append(f"replace_vel={rvn}")
+            if inp_cfg.get("velocity_to_pressure"):
+                extras.append("vel_to_pressure")
             # Per-channel overrides summary
             if per_ch_yaml:
                 per_parts = []
@@ -3463,6 +3508,10 @@ class MidiPresetService:
                         tags.append(
                             f"rep_vel="
                             f"{over['replace_note_velocity']}")
+                    if "velocity_to_pressure" in over:
+                        tags.append(
+                            "v2p" if over["velocity_to_pressure"]
+                            else "!v2p")
                     if tags:
                         per_parts.append(f"ch{ch1}:{','.join(tags)}")
                 if per_parts:
