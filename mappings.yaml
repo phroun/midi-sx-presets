@@ -15,6 +15,16 @@
 #
 # Action matching:
 #   (shift_state & mask) == compare  AND  from_channel matches (if specified)
+#   AND  mapping matches (if specified on the action)
+#
+# Mapping filter:
+#   Input devices in config.yaml can have a "mapping:" label (e.g. "pads",
+#   "keys").  Any action (cc_mapping, note_mapping, shift_definition,
+#   joystick_definition) can include a "mapping:" field — either a single
+#   string or a list of strings.  When present, the action only matches
+#   messages from an input device whose mapping label is in that list.
+#   When "mapping:" is omitted from an action, it matches regardless of
+#   the input device's mapping label.
 #
 # Channel numbering: 1-based (1-16), matching original Scripter convention.
 # Python engine converts to 0-based for mido internally.
@@ -305,6 +315,8 @@ cc_mappings:
 #   mask      - shift bitmask (default 0)
 #   compare   - shift compare value (default 0)
 #   from_channel - only match this source channel (1-based, optional)
+#   mapping   - only match input devices with this mapping label
+#               (string or list of strings, optional)
 #   transpose - semitones to shift note number (+/-, clamped to 0-127)
 #   channel   - override destination channel (1-based)
 #   name      - descriptive label for logging

@@ -185,6 +185,8 @@ class MidiPresetService:
 
         # Source device tag for debug logging (set per message in run loop)
         self._msg_source = ""
+        # Input mapping label (set per message from routing config)
+        self._msg_mapping = None
 
         # MIDI ports (opened in run())
         self.midi_in = None
@@ -1659,12 +1661,27 @@ class MidiPresetService:
         if old is not None:
             old.cancel()
 
+    def _mapping_matches(self, entry):
+        """Check if an action/definition's mapping filter matches the current input.
+
+        Returns True if the entry has no ``mapping`` field (matches anything)
+        or if the current ``_msg_mapping`` is listed in the entry's mapping(s).
+        """
+        entry_mapping = entry.get("mapping")
+        if entry_mapping is None:
+            return True
+        if isinstance(entry_mapping, str):
+            entry_mapping = [entry_mapping]
+        return self._msg_mapping in entry_mapping
+
     def _process_shift(self, msg):
         """Update shift bitmask if msg is a shift CC. Returns True if handled."""
         # Channels are 1-based in config, 0-based in mido — shift CCs match
         # by CC number only (same as original Scripter behaviour).
         for sdef in self.shift_defs:
             if msg.control == sdef["cc"]:
+                if not self._mapping_matches(sdef):
+                    continue
                 bit = sdef["bit"]
                 old = self.shift_state
                 if msg.value > sdef["threshold"]:
@@ -1683,6 +1700,9 @@ class MidiPresetService:
             is_negative = msg.control == jdef["negative_cc"]
             is_positive = msg.control == jdef["positive_cc"]
             if not (is_negative or is_positive):
+                continue
+
+            if not self._mapping_matches(jdef):
                 continue
 
             # Initialise per-joystick state
@@ -1753,6 +1773,11 @@ class MidiPresetService:
         src_ch_1based = msg.channel + 1
 
         for action in actions:
+            # Mapping filter — if the action specifies mapping(s), the
+            # input device's mapping label must match one of them.
+            if not self._mapping_matches(action):
+                continue
+
             # Channel filter
             if "from_channel" in action:
                 if action["from_channel"] != src_ch_1based:
@@ -2177,6 +2202,10 @@ class MidiPresetService:
         for nm in self.note_mappings:
             # Range check (inclusive)
             if note < nm["low"] or note > nm["high"]:
+                continue
+
+            # Mapping filter
+            if not self._mapping_matches(nm):
                 continue
 
             # Channel filter
@@ -2869,6 +2898,9 @@ class MidiPresetService:
         # channels are 1-based in config; convert to 0-based set (empty = all)
         ch_set = {c - 1 for c in channels} if channels else None
 
+        # Device-level mapping label (optional; used for routing filters)
+        device_mapping = inp_cfg.get("mapping") or None
+
         # Build per-channel options (device defaults + per_channel overrides)
         ch_opts = self._parse_channel_opts(inp_cfg, ch_set)
 
@@ -2886,7 +2918,8 @@ class MidiPresetService:
             ch0 for ch0, o in ch_opts.items() if o["p2p"])
 
         def make_cb(ch_filter, channel_opts, has_p2p,
-                    has_debounce, has_vel_dest, has_v2p, source):
+                    has_debounce, has_vel_dest, has_v2p, source,
+                    mapping_label=None):
             # Per-device note tracker:
             #   active[ch][note] = {"vel", "started", "start_t",
             #                       "last_out", "last_out_t",
@@ -2912,11 +2945,11 @@ class MidiPresetService:
                         if needs_tracking else None)
 
             def _put(m):
-                msg_queue.put((source, m))
+                msg_queue.put((source, mapping_label, m))
 
             def _put_vel_cc(m):
                 """Queue a velocity-destination CC that bypasses _handle_message."""
-                msg_queue.put(("_vel_cc", m))
+                msg_queue.put(("_vel_cc", None, m))
 
             def _flush_pending(now):
                 """Release any debounced note-offs whose timer expired."""
@@ -3335,7 +3368,7 @@ class MidiPresetService:
             # Launchpad Pro MK3).
             cb = make_cb(ch_set, ch_opts, any_p2p,
                          any_debounce, any_vel_dest, any_v2p,
-                         device)
+                         device, mapping_label=device_mapping)
             _open_result = [None, None]  # [port, exception]
 
             def _open_port():
@@ -3527,6 +3560,8 @@ class MidiPresetService:
                         per_parts.append(f"ch{ch1}:{','.join(tags)}")
                 if per_parts:
                     extras.append(f"per_ch[{'; '.join(per_parts)}]")
+            if device_mapping:
+                extras.append(f"mapping={device_mapping}")
             suffix = f" {' '.join(extras)}" if extras else ""
             _log("OPEN", f"Input device : {device} (ch {ch_str}){suffix}")
         except OSError as exc:
@@ -3661,7 +3696,7 @@ class MidiPresetService:
                     self.midi_in = mido.open_input(
                         iac_name,
                         callback=lambda m, s=iac_name: msg_queue.put(
-                            (s, m)))
+                            (s, None, m)))
 
                 self.midi_out = mido.open_output(self.routing["hardware_output"])
                 self.midi_return = mido.open_output(self.routing["iac_return"])
@@ -3679,16 +3714,17 @@ class MidiPresetService:
                 self._boot_sync()
 
                 # Unified message loop — all inputs feed the queue
-                # Each item is a (source_device_name, msg) tuple.
+                # Each item is a (source_device_name, mapping_label, msg) tuple.
                 while True:
                     try:
-                        source, msg = msg_queue.get(timeout=0.5)
+                        source, mapping_label, msg = msg_queue.get(timeout=0.5)
                     except queue.Empty:
                         continue
                     if source == "_vel_cc":
                         self._forward(msg)
                         continue
                     self._msg_source = source
+                    self._msg_mapping = mapping_label
                     self._handle_message(msg)
             else:
                 # -- Standalone mode ------------------------------------------
@@ -3696,6 +3732,7 @@ class MidiPresetService:
                 self.midi_out = mido.open_output(port_name, virtual=True)
                 self.midi_return = self.midi_out
                 self._msg_source = port_name
+                self._msg_mapping = None
 
                 self._midi_reset()
                 self._boot_sync()
