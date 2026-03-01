@@ -1,6 +1,6 @@
 # Note Mapping & Polyphony
 
-Defined in the `note_mappings` section of `cc_mappings.yaml`. Note mappings process note-on and note-off messages through range-based rules with optional polyphony management.
+Defined in the `note_mappings` section of `mappings.yaml`. Note mappings process note-on and note-off messages through range-based rules with optional polyphony management.
 
 ---
 

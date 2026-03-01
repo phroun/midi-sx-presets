@@ -637,14 +637,14 @@ class MidiPresetService:
         return bool(allowed & param_tags)
 
     def _load_cc_mappings(self):
-        """Load cc_mappings.yaml — shift/joystick definitions and CC routing.
+        """Load mappings.yaml — shift/joystick definitions and CC routing.
 
         Actions may use ``parameter: name`` (resolved via
         reverse_destinations) instead of explicit ``cc:`` and
         ``channel:``.  Resolution happens here at load time so the
         runtime mapping path stays branchless.
         """
-        path = self.config_dir / "cc_mappings.yaml"
+        path = self.config_dir / "mappings.yaml"
         if path.exists():
             data = _yaml_load(path)
         else:

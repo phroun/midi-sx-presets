@@ -1,6 +1,6 @@
 # CC Mapping Engine
 
-Defined in `cc_mappings.yaml`. The mapping engine processes every incoming CC through a pipeline:
+Defined in `mappings.yaml`. The mapping engine processes every incoming CC through a pipeline:
 
 1. **Shift CCs** — update the 16-bit shift bitmask (consumed, not forwarded).
 2. **MIDI Reset CCs** (121, 123) — re-send all destination values to hardware.

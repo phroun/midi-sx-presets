@@ -38,7 +38,7 @@ The service has two operating modes:
 | `midi_send.py` | CLI utility to send a text command to the service via SysEx. |
 | `config.yaml` | Port names, routing, device IDs, bank tags, misc settings. |
 | `cc_sets.yaml` | CC-number-to-name mappings, with optional defaults and tags. |
-| `cc_mappings.yaml` | Shift/joystick definitions, CC routing rules, note range mappings. |
+| `mappings.yaml` | Shift/joystick definitions, CC routing rules, note range mappings. |
 | `destinations.yaml` | Logical groupings of channels → CC sets, with prefixes and overrides. |
 | `state.yaml` | Persisted runtime state (destination values, cursor, shift, seq counters). |
 | `presets/` | Directory of per-note YAML preset files (`preset-ch1-048.yaml`, etc.). |
