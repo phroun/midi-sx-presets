@@ -403,6 +403,7 @@ note_mappings:
     polyphony_instance: chords
     max_polyphony: 4
     polyphonic_distribution: [2, 4, 6, 7]
+    allocation_strategy: first_available
     after_poly_to_chan: true
     fallback_priority: most_recent
     replace_priority: highest
@@ -426,6 +427,7 @@ note_mappings:
     from_channel: 4
     polyphony_instance: chords
     polyphonic_distribution: [2, 4, 7, 8]
+    allocation_strategy: round_robin
     after_poly_to_chan: true
     channel: 2
     name: "Poly4"
@@ -446,6 +448,7 @@ note_mappings:
     compare: 0x0001
     from_channel: 4
     polyphony_instance: chords
+    allocation_strategy: round_robin
     polyphonic_distribution: [2, 4, 7, 8]
     after_poly_to_chan: true
     channel: 2

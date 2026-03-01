@@ -1,5 +1,5 @@
 destination_states:
-  '1_1': 63
+  '1_1': 17
   '3_1': 0
   '7_1': 110
   '9_1': 0
@@ -15,7 +15,7 @@ destination_states:
   '79_1': 48
   '80_1': 10
   '86_1': 110
-  '87_1': 21
+  '87_1': 28
   '88_1': 78
   '89_1': 63
   '90_1': 1
@@ -102,7 +102,7 @@ destination_states:
   '1_15': 0
   '8_13': 0
   '46_12': 94
-  '72_13': 0
+  '72_13': 31
   '0_14': 0
   '93_13': 66
 seq_states:
@@ -111,7 +111,7 @@ preset_cursor:
   1: 48
   0: 50
 intercept_mode: true
-shift_state: 0
+shift_state: 1
 last_preset:
 - 0
 - 50
