@@ -2590,20 +2590,20 @@ class MidiPresetService:
         """Send a velocity-to-pressure aftertouch before the note-on.
 
         Called from _handle_message after _process_note_mapping has
-        resolved the target channel.  Sends a channel aftertouch
-        (pressure) message set to the note's velocity so the synth's
-        pressure state is initialised before the note sounds.
+        resolved the target channel.  Uses the fully processed velocity
+        from each mapped output note-on message so the aftertouch value
+        matches what the synth will receive.
         """
         src = getattr(self, "_msg_source", None)
         key = (src, msg.channel, msg.note)
-        vel = self._v2p_pending.pop(key, None)
-        if vel is None:
+        if self._v2p_pending.pop(key, None) is None:
             return
         sent = set()
         for m in mapped_msgs:
-            if m.channel not in sent:
+            if (m.type == "note_on" and m.velocity > 0
+                    and m.channel not in sent):
                 self._forward(mido.Message(
-                    "aftertouch", channel=m.channel, value=vel))
+                    "aftertouch", channel=m.channel, value=m.velocity))
                 sent.add(m.channel)
 
     # -- Extra input helpers ---------------------------------------------------
@@ -3145,7 +3145,7 @@ class MidiPresetService:
                 if (has_v2p and copts.get("v2p")
                         and msg.type == "note_on" and msg.velocity > 0):
                     self._v2p_pending[
-                        (source, ch, msg.note)] = msg.velocity
+                        (source, ch, msg.note)] = True
 
                 # Track notes for debounce + pressure-to-poly
                 if active is not None and ch is not None:
