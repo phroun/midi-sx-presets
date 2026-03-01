@@ -1543,22 +1543,34 @@ class MidiPresetService:
         return internal
 
     def _midi_reset(self):
-        """Send All Notes Off + Reset All Controllers on every channel.
+        """Send comprehensive MIDI reset on every channel.
 
         Called once at startup before _boot_sync so the hardware begins
         in a clean state — no hanging notes or stale aftertouch from a
         previous session.
+
+        Sends: All Sound Off, All Notes Off, Reset All Controllers,
+        aftertouch zero, and explicit note_off for every note (0-127)
+        on all 16 channels.  The per-note note_off is the most reliable
+        method for clearing stuck notes on synths that don't implement
+        the All Notes Off CC.
         """
         if not self.midi_out:
             return
         for ch in range(16):
+            self.midi_out.send(mido.Message(
+                "control_change", channel=ch, control=120, value=0))
             self.midi_out.send(mido.Message(
                 "control_change", channel=ch, control=123, value=0))
             self.midi_out.send(mido.Message(
                 "control_change", channel=ch, control=121, value=0))
             self.midi_out.send(mido.Message(
                 "aftertouch", channel=ch, value=0))
-        _log("BOOT", "Sent MIDI reset (All Notes Off / Reset All Controllers) on all channels")
+            for note in range(128):
+                self.midi_out.send(mido.Message(
+                    "note_off", channel=ch, note=note, velocity=0))
+        _log("BOOT", "Sent MIDI reset (note-off × 128, All Sound/Notes Off, "
+             "Reset Controllers, aftertouch 0) on all 16 channels")
 
     def _boot_sync(self):
         """Populate missing destinations from defaults and send all to hardware.
