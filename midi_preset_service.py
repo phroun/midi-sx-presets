@@ -198,11 +198,6 @@ class MidiPresetService:
         # Velocity-to-pressure pending aftertouch awaiting output channel.
         # Key: (source_device, ch0, note), value: velocity (int)
         self._v2p_pending = {}
-        # V2P active-note tracking for aftertouch cleanup on note-off.
-        # _v2p_active: (source, in_ch, note) → set of output channels
-        # _v2p_ch_count: output_channel → count of active v2p notes
-        self._v2p_active = {}
-        self._v2p_ch_count = {}
 
     # -- Config / persistence -------------------------------------------------
 
@@ -2486,10 +2481,8 @@ class MidiPresetService:
             if mapped is not None:
                 for m in mapped:
                     self._forward(m)
-                self._clear_v2p_aftertouch(msg)
                 return
             self._forward(msg)
-            self._clear_v2p_aftertouch(msg)
             return
 
         # Control Change — process through mapping engine
@@ -2600,10 +2593,6 @@ class MidiPresetService:
         resolved the target channel.  Sends a channel aftertouch
         (pressure) message set to the note's velocity so the synth's
         pressure state is initialised before the note sounds.
-
-        Also tracks active v2p notes per output channel so that
-        ``_clear_v2p_aftertouch`` can send aftertouch=0 when the last
-        note on a channel releases.
         """
         src = getattr(self, "_msg_source", None)
         key = (src, msg.channel, msg.note)
@@ -2616,29 +2605,6 @@ class MidiPresetService:
                 self._forward(mido.Message(
                     "aftertouch", channel=m.channel, value=vel))
                 sent.add(m.channel)
-        # Track which output channels this note's v2p touched
-        self._v2p_active[key] = sent
-        for ch in sent:
-            self._v2p_ch_count[ch] = self._v2p_ch_count.get(ch, 0) + 1
-
-    def _clear_v2p_aftertouch(self, msg):
-        """Send aftertouch=0 when the last v2p note on an output channel releases.
-
-        Called from _handle_message on the note-off path.
-        """
-        src = getattr(self, "_msg_source", None)
-        key = (src, msg.channel, msg.note)
-        out_channels = self._v2p_active.pop(key, None)
-        if out_channels is None:
-            return
-        for ch in out_channels:
-            count = self._v2p_ch_count.get(ch, 1) - 1
-            if count <= 0:
-                self._v2p_ch_count.pop(ch, None)
-                self._forward(mido.Message(
-                    "aftertouch", channel=ch, value=0))
-            else:
-                self._v2p_ch_count[ch] = count
 
     # -- Extra input helpers ---------------------------------------------------
 
@@ -3171,11 +3137,9 @@ class MidiPresetService:
                 ch = msg.channel if hasattr(msg, "channel") else None
                 copts = channel_opts.get(ch, {}) if ch is not None else {}
 
-                # Velocity curve (per-channel).
-                # Velocity 0 is ALWAYS note-off — never transform it.
+                # Velocity curve (per-channel)
                 vtable = copts.get("vtable")
-                if (vtable is not None and hasattr(msg, "velocity")
-                        and msg.velocity > 0):
+                if vtable is not None and hasattr(msg, "velocity"):
                     msg = msg.copy(velocity=vtable[msg.velocity])
 
                 # Velocity-to-pressure: queue aftertouch before note-on.
