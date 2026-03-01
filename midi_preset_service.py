@@ -2381,6 +2381,10 @@ class MidiPresetService:
         # floor.  After unlock, the output can drop to pressure_floor.
         # 0 = no shelf (decay goes straight to floor/sustain).
         default_shelf = int(inp_cfg.get("pressure_shelf", 0))
+        # Shelf top: values between shelf and shelf_top are clamped to
+        # shelf (dead zone).  Values above shelf_top are rescaled to
+        # cover [shelf, high].  0 = no dead zone (shelf_top == shelf).
+        default_shelf_top = int(inp_cfg.get("pressure_shelf_top", 0))
         # Slew rates in steps/sec.  0 = unlimited (no limiting).
         # Legacy behaviour: when omitted, slew_down defaults to
         # 127/decay_s (matching the old symmetric rate) and slew_up
@@ -2437,6 +2441,10 @@ class MidiPresetService:
                 shelf = int(override["pressure_shelf"])
             else:
                 shelf = default_shelf
+            if "pressure_shelf_top" in override:
+                shelf_top = int(override["pressure_shelf_top"])
+            else:
+                shelf_top = default_shelf_top
 
             # Slew rates (steps/sec)
             if "slew_up" in override:
@@ -2459,6 +2467,7 @@ class MidiPresetService:
                          "decay_s": decay_s,
                          "sustain_pct": sustain_pct,
                          "shelf": shelf,
+                         "shelf_top": shelf_top,
                          "slew_up": slew_up,
                          "slew_down": slew_down,
                          "debounce_s": debounce_s}
@@ -2558,9 +2567,26 @@ class MidiPresetService:
                     info["last_out_t"] = now
                     is_start = True
 
+                # Shelf dead zone + rescale: values between shelf
+                # and shelf_top clamp to shelf; values above
+                # shelf_top are rescaled to [shelf, high].
+                shelf = copts.get("shelf", 0)
+                shelf_top = copts.get("shelf_top", 0)
+                if (shelf_top > shelf > 0
+                        and pressure >= shelf):
+                    high_out = (ptable[127]
+                                if ptable is not None else 127)
+                    if pressure < shelf_top:
+                        pressure = shelf
+                    elif shelf_top < high_out:
+                        # Rescale [shelf_top, high] → [shelf, high]
+                        t = ((pressure - shelf_top)
+                             / (high_out - shelf_top))
+                        pressure = int(round(
+                            shelf + (high_out - shelf) * t))
+
                 target = float(pressure)
                 floor_v = 0.0
-                shelf = copts.get("shelf", 0)
                 if decay_s > 0:
                     elapsed_s = now - info["start_t"]
                     frac = min(1.0, elapsed_s / decay_s)
@@ -2802,8 +2828,14 @@ class MidiPresetService:
                 # Collect unique shelf values across p2p channels
                 sh_vals = sorted({ch_opts[c - 1]["shelf"]
                                   for c in p2p_chs})
+                st_vals = sorted({ch_opts[c - 1]["shelf_top"]
+                                  for c in p2p_chs})
                 if len(sh_vals) == 1 and sh_vals[0] > 0:
-                    shelf_tag = f" shelf={sh_vals[0]}"
+                    sh_label = str(sh_vals[0])
+                    if (len(st_vals) == 1
+                            and st_vals[0] > sh_vals[0]):
+                        sh_label += f"-{st_vals[0]}"
+                    shelf_tag = f" shelf={sh_label}"
                 elif any(v > 0 for v in sh_vals):
                     shelf_tag = " shelf=per-ch"
                 else:
@@ -2872,8 +2904,11 @@ class MidiPresetService:
                         tags.append(
                             f"pcurve(c={opc.get('curve', 1.0)})")
                     if "pressure_shelf" in over:
-                        tags.append(
-                            f"shelf={over['pressure_shelf']}")
+                        sh_lbl = str(over["pressure_shelf"])
+                        if "pressure_shelf_top" in over:
+                            sh_lbl += (
+                                f"-{over['pressure_shelf_top']}")
+                        tags.append(f"shelf={sh_lbl}")
                     if "slew_up" in over:
                         tags.append(
                             f"slew_up={over['slew_up']}")
