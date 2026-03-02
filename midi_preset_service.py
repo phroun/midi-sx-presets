@@ -898,8 +898,11 @@ class MidiPresetService:
             if dist is not None:
                 # Convert 1-based YAML channels to 0-based
                 nm["_dist_slots"] = [int(ch) - 1 for ch in dist]
+                # send_all strategy implies monophonic (one note → all slots)
+                if nm.get("allocation_strategy") == "send_all":
+                    nm["max_polyphony"] = 1
                 # Implicitly set max_polyphony from slot count
-                if "max_polyphony" not in nm:
+                elif "max_polyphony" not in nm:
                     nm["max_polyphony"] = len(nm["_dist_slots"])
 
         # Resolve named polyphony instances
@@ -2295,11 +2298,56 @@ class MidiPresetService:
 
         When *dist_slots* is provided (a list of 0-based MIDI channels),
         each new voice is assigned to the next available slot using the
-        *alloc_strategy* (round_robin, first_available, most_idle, or
-        least_idle).  The slot's channel overrides *out_ch*.
+        *alloc_strategy* (round_robin, first_available, most_idle,
+        least_idle, or send_all).  The slot's channel overrides *out_ch*.
+
+        ``send_all`` sends the note to every slot simultaneously (layer
+        mode).  It implies monophonic — only one note can be active, and
+        it occupies every slot at once.
         """
         now = time.monotonic()
 
+        # -- send_all: broadcast to every distribution slot ----------------
+        if alloc_strategy == "send_all" and dist_slots:
+            note_info = {"pitch": pitch, "velocity": velocity,
+                         "timestamp": now, "transpose": transpose,
+                         "out_ch": dist_slots[0],
+                         "out_channels": list(dist_slots)}
+            state["held"] = [n for n in state["held"]
+                             if n["pitch"] != pitch]
+            state["held"].append(note_info)
+
+            results = []
+
+            # Retrigger: same pitch already active → re-send on all slots
+            existing = next(
+                (n for n in state["active"] if n["pitch"] == pitch), None)
+            if existing is not None:
+                channels = existing.get("out_channels", [existing["out_ch"]])
+                note_info["out_channels"] = channels
+                note_info["out_ch"] = channels[0]
+                state["active"] = [n for n in state["active"]
+                                   if n["pitch"] != pitch]
+                state["active"].append(note_info)
+                for ch in channels:
+                    results.append(("on", pitch, velocity, "retrigger",
+                                    transpose, ch))
+                return results
+
+            # Steal any currently active note (mono: at most one)
+            for old in list(state["active"]):
+                old_chs = old.get("out_channels", [old["out_ch"]])
+                for ch in old_chs:
+                    results.append(("off", old["pitch"], "steal",
+                                    old["transpose"], ch))
+            state["active"] = [note_info]
+            for ch in dist_slots:
+                results.append(("on", pitch, velocity,
+                                "new" if not results else "replace",
+                                transpose, ch))
+            return results
+
+        # -- Normal allocation (round_robin / first_available / idle) ------
         if dist_slots:
             slot_ch = self._dist_alloc(state, dist_slots, alloc_strategy)
         else:
@@ -2410,6 +2458,9 @@ class MidiPresetService:
         Returns a list of action tuples (same format as _poly_note_on).
         Uses stored transpose/out_ch from the released and fallback notes
         so cross-range actions produce correct output.
+
+        If the active note has ``out_channels`` (send_all mode), note-off
+        and any fallback note-on are emitted on every stored channel.
         """
         # Remove from held
         state["held"] = [n for n in state["held"] if n["pitch"] != pitch]
@@ -2424,25 +2475,47 @@ class MidiPresetService:
 
         # Use the stored values from when this note was activated
         rel_transpose = active_note.get("transpose", transpose)
+        all_channels = active_note.get("out_channels")
         rel_out_ch = active_note.get("out_ch", out_ch)
-        results.append(("off", pitch, "release", rel_transpose, rel_out_ch))
+        if all_channels:
+            for ch in all_channels:
+                results.append(("off", pitch, "release",
+                                rel_transpose, ch))
+        else:
+            results.append(("off", pitch, "release",
+                            rel_transpose, rel_out_ch))
         state["active"] = [n for n in state["active"]
                            if n["pitch"] != pitch]
 
         # Try to activate a held-but-inactive note as fallback
-        # Fallback inherits the freed channel slot (for distribution)
+        # Fallback inherits the freed channel slot(s) (for distribution)
         fallback = self._select_fallback(
             state["held"], state["active"], fallback_priority)
         if fallback is not None:
-            fallback["out_ch"] = rel_out_ch
-            state["active"].append(fallback)
-            results.append(("on", fallback["pitch"],
-                            fallback["velocity"], "fallback",
-                            fallback.get("transpose", transpose),
-                            rel_out_ch))
+            if all_channels:
+                fallback["out_ch"] = all_channels[0]
+                fallback["out_channels"] = list(all_channels)
+                state["active"].append(fallback)
+                fb_transpose = fallback.get("transpose", transpose)
+                for ch in all_channels:
+                    results.append(("on", fallback["pitch"],
+                                    fallback["velocity"], "fallback",
+                                    fb_transpose, ch))
+            else:
+                fallback["out_ch"] = rel_out_ch
+                state["active"].append(fallback)
+                results.append(("on", fallback["pitch"],
+                                fallback["velocity"], "fallback",
+                                fallback.get("transpose", transpose),
+                                rel_out_ch))
         else:
             # Slot is now truly free — record release time for idle tracking
-            state["dist_release_times"][rel_out_ch] = time.monotonic()
+            if all_channels:
+                now = time.monotonic()
+                for ch in all_channels:
+                    state["dist_release_times"][ch] = now
+            else:
+                state["dist_release_times"][rel_out_ch] = time.monotonic()
 
         return results
 
@@ -2953,18 +3026,20 @@ class MidiPresetService:
                              if n["pitch"] == msg.note), None)
                         if active:
                             out_note = msg.note + active["transpose"]
+                            # send_all: broadcast to every channel
+                            all_chs = active.get("out_channels",
+                                                 [active["out_ch"]])
                             if 0 <= out_note <= 127:
-                                if info.get("poly_to_chan"):
-                                    # Convert polytouch → channel aftertouch
-                                    # on the distributed channel
-                                    self._forward(mido.Message(
-                                        "aftertouch",
-                                        channel=active["out_ch"],
-                                        value=msg.value))
-                                else:
-                                    self._forward(msg.copy(
-                                        note=out_note,
-                                        channel=active["out_ch"]))
+                                for a_ch in all_chs:
+                                    if info.get("poly_to_chan"):
+                                        self._forward(mido.Message(
+                                            "aftertouch",
+                                            channel=a_ch,
+                                            value=msg.value))
+                                    else:
+                                        self._forward(msg.copy(
+                                            note=out_note,
+                                            channel=a_ch))
                     else:
                         out_note = msg.note + info["transpose"]
                         if 0 <= out_note <= 127:
