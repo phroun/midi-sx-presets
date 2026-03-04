@@ -200,6 +200,15 @@ class MidiPresetService:
         self.midi_return = None  # Recall output (= midi_out in standalone mode)
         self.extra_inputs = []   # Additional input ports from routing.inputs
         self.p2p_channels = set()  # 0-based channels with pressure-to-poly
+        # P2P active note states, exposed for cross-system queries
+        # (e.g. legato_velocity_mode).  Populated by _setup_extra_inputs.
+        # {source: {ch: {note: info_dict}}}  — protected by _p2p_locks.
+        self._p2p_sources = {}
+        self._p2p_locks = {}
+        # Shelf override: when legato_velocity_mode re-locks the shelf,
+        # the P2P note-on handler reads from here.
+        # Key: (input_ch, note), value: {"shelf": int, "velocity": int}
+        self._p2p_legato_overrides = {}
         # Velocity-destination pending CCs awaiting target channel resolution.
         # Key: (source_device, ch0, note), value: {"cc", "value"}
         self._vel_dest_pending = {}
@@ -2276,6 +2285,92 @@ class MidiPresetService:
 
     # -- Note range mapping ---------------------------------------------------
 
+    def _check_legato_steal(self, cfg):
+        """Evaluate a ``legato_steal`` condition at note-on time.
+
+        *cfg* is the ``legato_steal`` dict from the note mapping::
+
+            legato_steal:
+              type: cc
+              channel: 3          # 1-based
+              cc: 1
+              min: 64
+              max: 127
+
+            legato_steal:
+              type: seq
+              seq: MonoVoice
+              min: 2
+              max: 4
+
+        Returns True if the current value is within [min, max] inclusive.
+        """
+        if not cfg or not isinstance(cfg, dict):
+            return False
+        ctype = cfg.get("type", "").lower()
+        lo = int(cfg.get("min", 0))
+        hi = int(cfg.get("max", 127))
+        if ctype == "cc":
+            ch = int(cfg.get("channel", 1)) - 1  # 1-based → 0-based
+            cc = int(cfg.get("cc", 0))
+            internal = self._get_dest(cc, ch)
+            value = self._output_value(cc, ch, internal)
+            return lo <= value <= hi
+        if ctype == "seq":
+            seq_name = cfg.get("seq", "")
+            value = self.seq_states.get(seq_name, 0)
+            return lo <= value <= hi
+        return False
+
+    def _apply_legato_velocity(self, actions, input_ch, input_note,
+                               vel_mode):
+        """Override velocity on legato note-on actions.
+
+        When ``legato_velocity_mode`` is configured, the new note's
+        velocity is replaced by the stolen note's current P2P pressure
+        output.  A shelf override is queued so the P2P system re-locks
+        the shelf at that pressure level for the new note.
+
+        *actions* is the mutable list of action tuples from
+        ``_poly_note_on``.  ``"legato"`` reason on-actions are modified
+        in-place (tuples are replaced).
+
+        *vel_mode* may be ``True`` / ``"pressure"`` (use stolen note's
+        current P2P pressure), or a dict with additional options (future).
+        """
+        # Find the stolen note's pitch from the steal-off action
+        stolen_pitch = None
+        for a in actions:
+            if a[0] == "off" and a[2] == "steal":
+                stolen_pitch = a[1]  # original (pre-transpose) pitch
+                break
+        if stolen_pitch is None:
+            return
+
+        # Look up the stolen note's current P2P pressure
+        pressure = self._get_p2p_pressure(input_ch, stolen_pitch)
+        if pressure is None or pressure <= 0:
+            return  # no P2P data — leave velocity as-is
+
+        # Replace velocity in every legato on-action
+        for i, a in enumerate(actions):
+            if a[0] == "on" and a[3] == "legato":
+                actions[i] = (a[0], a[1], pressure, a[3], a[4], a[5])
+
+        # Queue shelf override for the new note's P2P tracking.
+        # When the P2P note-on handler sees this, it will:
+        #   - Use pressure as the initial value (instead of velocity)
+        #   - Lock the shelf at that pressure level
+        #   - The new key's physical pressure must reach the shelf
+        #     to unlock it and take over.
+        self._p2p_legato_overrides[(input_ch, input_note)] = {
+            "shelf": pressure,
+            "velocity": pressure,
+        }
+        _log("LEGATO", f"ch{input_ch + 1} note {input_note}: "
+             f"velocity → {pressure} (stolen {stolen_pitch} pressure), "
+             f"shelf re-locked at {pressure}")
+
     def _get_poly_state(self, key):
         """Get or create polyphony state for a pool (instance name or channel)."""
         if key not in self.poly_states:
@@ -2286,7 +2381,8 @@ class MidiPresetService:
 
     def _poly_note_on(self, state, pitch, velocity, max_poly,
                       replace_priority, transpose, out_ch,
-                      dist_slots=None, alloc_strategy="round_robin"):
+                      dist_slots=None, alloc_strategy="round_robin",
+                      legato=False):
         """Process note-on through polyphony limiter.
 
         Tracks notes by their original (pre-transpose) pitch, along with
@@ -2294,7 +2390,12 @@ class MidiPresetService:
         Returns a list of action tuples:
           ("on", pitch, velocity, reason, transpose, out_ch)
           ("off", pitch, reason, transpose, out_ch)
-        where reason is one of: "new", "retrigger", "replace", "steal".
+        where reason is one of: "new", "retrigger", "replace", "steal",
+        or "legato".
+
+        When *legato* is True and voice stealing is needed, the note-on
+        is emitted **before** the note-off (overlapping transition) and
+        the reason is ``"legato"`` instead of ``"replace"``.
 
         When *dist_slots* is provided (a list of 0-based MIDI channels),
         each new voice is assigned to the next available slot using the
@@ -2335,16 +2436,26 @@ class MidiPresetService:
                 return results
 
             # Steal any currently active note (mono: at most one)
+            offs = []
             for old in list(state["active"]):
                 old_chs = old.get("out_channels", [old["out_ch"]])
                 for ch in old_chs:
-                    results.append(("off", old["pitch"], "steal",
-                                    old["transpose"], ch))
+                    offs.append(("off", old["pitch"], "steal",
+                                 old["transpose"], ch))
+            has_steal = bool(offs)
+            reason = "legato" if (legato and has_steal) else (
+                "replace" if has_steal else "new")
             state["active"] = [note_info]
+            ons = []
             for ch in dist_slots:
-                results.append(("on", pitch, velocity,
-                                "new" if not results else "replace",
-                                transpose, ch))
+                ons.append(("on", pitch, velocity, reason,
+                            transpose, ch))
+            if legato and has_steal:
+                results.extend(ons)   # note-on FIRST
+                results.extend(offs)  # then note-off
+            else:
+                results.extend(offs)
+                results.extend(ons)
             return results
 
         # -- Normal allocation (round_robin / first_available / idle) ------
@@ -2385,16 +2496,23 @@ class MidiPresetService:
         # Polyphony full → steal a voice (reuse stolen voice's channel slot)
         to_replace = self._select_replace(state["active"], replace_priority)
         if to_replace is not None:
-            results.append(("off", to_replace["pitch"], "steal",
-                            to_replace["transpose"], to_replace["out_ch"]))
+            off_action = ("off", to_replace["pitch"], "steal",
+                          to_replace["transpose"], to_replace["out_ch"])
             if dist_slots:
                 # Reuse the freed channel slot instead of round-robin
                 note_info["out_ch"] = to_replace["out_ch"]
             state["active"] = [n for n in state["active"]
                                if n["pitch"] != to_replace["pitch"]]
             state["active"].append(note_info)
-            results.append(("on", pitch, velocity, "replace",
-                            transpose, note_info["out_ch"]))
+            reason = "legato" if legato else "replace"
+            on_action = ("on", pitch, velocity, reason,
+                         transpose, note_info["out_ch"])
+            if legato:
+                results.append(on_action)    # note-on FIRST
+                results.append(off_action)   # then note-off
+            else:
+                results.append(off_action)
+                results.append(on_action)
 
         return results
 
@@ -2727,10 +2845,22 @@ class MidiPresetService:
                 state = self._get_poly_state(pool_key)
 
                 if is_note_on:
+                    # Evaluate legato_steal condition
+                    legato_cfg = nm.get("legato_steal")
+                    is_legato = (bool(legato_cfg)
+                                 and len(state["active"]) >= max_poly
+                                 and self._check_legato_steal(legato_cfg))
                     actions = self._poly_note_on(
                         state, note, msg.velocity, max_poly, replace_pri,
                         transpose, out_ch, dist_slots=dist_slots,
-                        alloc_strategy=alloc_strat)
+                        alloc_strategy=alloc_strat,
+                        legato=is_legato)
+                    # legato_velocity_mode: override velocity with
+                    # stolen note's pressure + re-lock shelf
+                    vel_mode = nm.get("legato_velocity_mode")
+                    if is_legato and vel_mode:
+                        self._apply_legato_velocity(
+                            actions, msg.channel, note, vel_mode)
                     # Track origin for later note-off routing
                     origins.append({
                         "has_poly": True,
@@ -3090,6 +3220,26 @@ class MidiPresetService:
         fh.write(f"{ts} {direction:3s}{src} {_fmt_midi_msg(msg)}\n")
         fh.flush()
 
+    def _get_p2p_pressure(self, ch, note):
+        """Return the current P2P output pressure for (ch, note), or None.
+
+        Searches all P2P sources.  Returns the ``last_sent`` value (int,
+        0-127) — the most recent polytouch value sent for this note.
+        Thread-safe: acquires the per-source P2P lock.
+        """
+        for source, active in self._p2p_sources.items():
+            lock = self._p2p_locks.get(source)
+            if lock is None:
+                continue
+            with lock:
+                ch_notes = active.get(ch)
+                if ch_notes is None:
+                    continue
+                info = ch_notes.get(note)
+                if info is not None:
+                    return int(info.get("last_sent", 0))
+        return None
+
     def _send_pending_vel_cc(self, msg, mapped_msgs):
         """Send a deferred velocity-destination CC (channel: target).
 
@@ -3425,6 +3575,12 @@ class MidiPresetService:
             pending_off = {} if needs_tracking else None
             p2p_lock = (threading.Lock()
                         if needs_tracking else None)
+            # Expose P2P active state on the service for cross-system
+            # queries (e.g. legato_velocity_mode pressure lookup).
+            if active is not None:
+                self._p2p_sources[source] = active
+            if p2p_lock is not None:
+                self._p2p_locks[source] = p2p_lock
 
             def _put(m):
                 msg_queue.put((source, mapping_label, m))
@@ -3496,7 +3652,12 @@ class MidiPresetService:
                 # Shelf dead zone + rescale: values between shelf
                 # and shelf_top clamp to shelf; values above
                 # shelf_top are rescaled to [shelf, high].
-                shelf = copts.get("shelf", 0)
+                # legato_shelf overrides the configured shelf for
+                # notes that entered via legato steal — the new
+                # key must press past this level to unlock.
+                legato_shelf = info.get("legato_shelf", 0)
+                shelf = (legato_shelf if legato_shelf > 0
+                         else copts.get("shelf", 0))
                 shelf_top = copts.get("shelf_top", 0)
                 if (shelf_top > shelf > 0
                         and pressure >= shelf):
@@ -3691,16 +3852,27 @@ class MidiPresetService:
                             if pend is not None:
                                 return
                             now_on = time.monotonic()
+                            # Check for legato velocity override
+                            legato_ov = self._p2p_legato_overrides.pop(
+                                (ch, msg.note), None)
                             # Determine pressure start value
                             p_start = copts.get(
                                 "pressure_start", "velocity")
-                            if p_start == "velocity":
+                            if legato_ov:
+                                p_start_val = int(
+                                    legato_ov["velocity"])
+                            elif p_start == "velocity":
                                 p_start_val = msg.velocity
                             else:
                                 p_start_val = int(p_start)
                             vel_dest = copts.get("vel_dest")
+                            # Shelf: legato override re-locks at
+                            # the stolen note's pressure level.
+                            legato_shelf = (int(legato_ov["shelf"])
+                                           if legato_ov else 0)
                             note_info = {
-                                "vel": msg.velocity,
+                                "vel": (p_start_val if legato_ov
+                                        else msg.velocity),
                                 "p_start_val": p_start_val,
                                 "started": True,
                                 "start_t": now_on,
@@ -3709,6 +3881,7 @@ class MidiPresetService:
                                 "last_sent": p_start_val,
                                 "last_pressure": 0,
                                 "shelf_unlocked": False,
+                                "legato_shelf": legato_shelf,
                                 # velocity destination tracking
                                 "vel_dest_cc": (
                                     vel_dest["cc"]
