@@ -384,6 +384,28 @@ cc_mappings:
 #     max_polyphony: 4
 #     channel: 3
 #     name: "4-voice poly synth"
+#
+# Auto-portamento — inject portamento CC before each note-on so the synth
+# glides from the previous pitch.  Input value 0 = instant (no glide).
+# Rate is scaled by interval: larger jumps get proportionally faster
+# portamento so the travel time stays roughly constant.
+#
+#   auto_portamento:
+#     target_cc: 84           # CC that controls portamento rate on the synth
+#     reference_channel: 1    # 1-based channel where the portamento
+#                             # destination state lives (set by mod wheel)
+#
+# Optional gated legato_only — uses the same condition format as
+# legato_steal (type: cc or seq, with channel/cc/min/max).  When the
+# gate evaluates true, only stolen/legato/replace notes get portamento;
+# new notes are instant even when a predecessor exists.
+#
+#     legato_only:
+#       type: cc
+#       channel: 3
+#       cc: 1
+#       min: 64
+#       max: 127
 
 note_mappings:
   - low: 0

@@ -913,6 +913,14 @@ class MidiPresetService:
                 # Implicitly set max_polyphony from slot count
                 elif "max_polyphony" not in nm:
                     nm["max_polyphony"] = len(nm["_dist_slots"])
+            # auto_portamento: inject portamento CC before voice transitions
+            ap = nm.get("auto_portamento")
+            if ap is not None:
+                nm["_auto_porta"] = {
+                    "target_cc": int(ap.get("target_cc", 84)),
+                    "ref_ch": int(ap.get("reference_channel", 1)) - 1,
+                    "legato_only": ap.get("legato_only", False),
+                }
 
         # Resolve named polyphony instances
         self.poly_instances = self._resolve_poly_instances()
@@ -970,6 +978,7 @@ class MidiPresetService:
         self._map_log_times = {}        # "cc_ch" -> last log timestamp (debounce)
         self.poly_states = {}           # pool_key -> {held: [...], active: [...]}
         self.note_on_origins = {}       # (ch0, note) -> origin info for note-off routing
+        self.auto_porta_last_pitch = {} # out_ch -> last note pitch (pre-transpose)
         self._center_trackers = {}      # dest_key -> center-snap wiggle state
         self._center_timers = {}        # dest_key -> threading.Timer for idle detect
 
@@ -2692,7 +2701,47 @@ class MidiPresetService:
             return min(available, key=lambda n: n["pitch"])
         return available[-1]  # fallback: most recently added
 
-    def _process_poly_actions(self, actions, name, pool_label, state, max_poly):
+    def _auto_porta_value(self, auto_porta, pitch, reason, out_ch):
+        """Compute portamento CC value for auto_portamento.
+
+        Returns (output_value, log_detail) or (None, None) if disabled.
+        Handles instant (no predecessor / retrigger / fallback),
+        legato_only gating, and distance-based rate scaling.
+        """
+        if auto_porta is None:
+            return None, None
+        target_cc = auto_porta["target_cc"]
+        ref_ch = auto_porta["ref_ch"]
+        legato_only = auto_porta["legato_only"]
+
+        prev_pitch = self.auto_porta_last_pitch.get(out_ch)
+
+        # Instant cases: no predecessor, retrigger, fallback
+        if prev_pitch is None or reason == "retrigger" or reason == "fallback":
+            output = self._output_value(target_cc, out_ch, 0)
+            return output, "instant"
+
+        # legato_only gate: when condition is met, only steal/legato/replace
+        # get portamento; otherwise everything with a predecessor does
+        if legato_only:
+            gate_on = (legato_only is True
+                       or self._check_legato_steal(legato_only))
+            if gate_on and reason not in ("replace", "legato"):
+                output = self._output_value(target_cc, out_ch, 0)
+                return output, "instant(gated)"
+
+        # Glide: scale reference portamento by interval
+        interval = abs(pitch - prev_pitch)
+        if interval == 0:
+            output = self._output_value(target_cc, out_ch, 0)
+            return output, "instant(unison)"
+        ref_internal = self._get_dest(target_cc, ref_ch)
+        scaled = round(ref_internal / interval)
+        output = self._output_value(target_cc, out_ch, scaled)
+        return output, f"glide({interval}st)"
+
+    def _process_poly_actions(self, actions, name, pool_label, state, max_poly,
+                              auto_porta=None):
         """Convert polyphony actions to MIDI messages with logging."""
         results = []
         for action in actions:
@@ -2702,9 +2751,24 @@ class MidiPresetService:
                 a_out_ch = action[5]
                 out_note = action[1] + a_transpose
                 if 0 <= out_note <= 127:
+                    # Auto-portamento: inject CC before note-on
+                    porta_val, porta_detail = self._auto_porta_value(
+                        auto_porta, action[1], action[3], a_out_ch)
+                    if porta_val is not None:
+                        results.append(mido.Message(
+                            "control_change",
+                            channel=a_out_ch,
+                            control=auto_porta["target_cc"],
+                            value=porta_val))
+                        _log("NOTE", f"auto_porta CC{auto_porta['target_cc']}"
+                             f" ch{a_out_ch + 1} = {porta_val}"
+                             f" ({porta_detail}) \"{name}\"")
                     results.append(mido.Message(
                         "note_on", note=out_note, channel=a_out_ch,
                         velocity=action[2]))
+                    # Track pitch for next auto_portamento calculation
+                    if auto_porta is not None:
+                        self.auto_porta_last_pitch[a_out_ch] = action[1]
                     src = getattr(self, "_msg_source", "")
                     _log("NOTE", f"poly {action[3]} "
                          f"note={action[1]}→{out_note} "
@@ -2719,6 +2783,9 @@ class MidiPresetService:
                 a_out_ch = action[4]
                 out_note = action[1] + a_transpose
                 if 0 <= out_note <= 127:
+                    # Clear last pitch on release (channel freed)
+                    if auto_porta is not None and action[2] == "release":
+                        self.auto_porta_last_pitch.pop(a_out_ch, None)
                     results.append(mido.Message(
                         "note_off", note=out_note, channel=a_out_ch,
                         velocity=0))
@@ -2750,7 +2817,8 @@ class MidiPresetService:
                               else f"ch{info['out_ch'] + 1}")
                 results.extend(self._process_poly_actions(
                     actions, info["name"], pool_label,
-                    state, info["max_poly"]))
+                    state, info["max_poly"],
+                    auto_porta=info.get("auto_porta")))
             else:
                 out_note = pitch + info["transpose"]
                 if 0 <= out_note <= 127:
@@ -2877,6 +2945,7 @@ class MidiPresetService:
                         self._apply_legato_velocity(
                             actions, msg.channel, note, vel_mode)
                     # Track origin for later note-off routing
+                    auto_porta = nm.get("_auto_porta")
                     origins.append({
                         "has_poly": True,
                         "pool_key": pool_key,
@@ -2888,6 +2957,7 @@ class MidiPresetService:
                         "inst_name": inst_name,
                         "poly_to_chan": bool(
                             nm.get("after_poly_to_chan")),
+                        "auto_porta": auto_porta,
                     })
                 else:
                     actions = self._poly_note_off(
@@ -2896,7 +2966,8 @@ class MidiPresetService:
                 pool_label = (f"'{inst_name}'"
                               if inst_name else f"ch{out_ch + 1}")
                 results.extend(self._process_poly_actions(
-                    actions, name, pool_label, state, max_poly))
+                    actions, name, pool_label, state, max_poly,
+                    auto_porta=nm.get("_auto_porta")))
             else:
                 # ---- Simple pass-through with optional transpose/channel ----
                 out_note = note + transpose
