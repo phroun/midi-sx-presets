@@ -49,6 +49,7 @@ mono:
     1:
       tags: [mono]
       cc_group: mix_ccs
+      84: portamento
     5:
       prefix: bass
       tags: [mono]

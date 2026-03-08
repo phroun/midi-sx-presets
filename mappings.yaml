@@ -15,16 +15,6 @@
 #
 # Action matching:
 #   (shift_state & mask) == compare  AND  from_channel matches (if specified)
-#   AND  mapping matches (if specified on the action)
-#
-# Mapping filter:
-#   Input devices in config.yaml can have a "mapping:" label (e.g. "pads",
-#   "keys").  Any action (cc_mapping, note_mapping, shift_definition,
-#   joystick_definition) can include a "mapping:" field — either a single
-#   string or a list of strings.  When present, the action only matches
-#   messages from an input device whose mapping label is in that list.
-#   When "mapping:" is omitted from an action, it matches regardless of
-#   the input device's mapping label.
 #
 # Channel numbering: 1-based (1-16), matching original Scripter convention.
 # Python engine converts to 0-based for mido internally.
@@ -72,8 +62,12 @@ cc_mappings:
 
   # ---- Mod Wheel --------------------------------------------------------
   1:
-    - {mask: 0, compare: 0, type: absolute, cc: 1, default: 64, name: "Mod Wheel"}
-    - {mask: 0, compare: 0, type: absolute, from_channel: 4, channel: 2, cc: 1, default: 64, name: "Mod Wheel P"}
+    - {mask: 0x00, compare: 0x00, from_channel: 1, type: absolute, cc: 84, default: 64, name: "Portamento M"}
+    - {mask: 0x03, compare: 0x00, from_channel: 2, type: absolute, cc: 1, default: 64, name: "Mod Wheel"}
+    - {mask: 0x03, compare: 0x01, from_channel: 2, type: absolute, cc: 1, default: 64, name: "Mod Wheel"}
+    - {mask: 0x03, compare: 0x02, from_channel: 2, type: absolute, cc: 1, default: 64, name: "Mod Wheel"}
+    - {mask: 0x03, compare: 0x03, from_channel: 2, type: absolute, cc: 84, default: 0, name: "Portamento P"}
+    - {mask: 0x03, compare: 0x00, type: absolute, from_channel: 4, channel: 2, cc: 1, default: 64, name: "Mod Wheel P"}
 
   # ---- Joystick Vertical (state tracked above; "No Pass" prevents forwarding raw CC) ----
   2:
@@ -249,7 +243,7 @@ cc_mappings:
     # Loop B Length:
     - {mask: 0x0068, compare: 0x0040, type: relative, cc: 5, default: 127, channel: 14, name: "Loop B Length"}  # Holding "B"
     # Vibato Amount:
-    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, cc: 94, default: 0, min: 0, max: 48, name: "Vibrato Amount"}  # Poly, BlueShift
+    - {from_channel: 2, mask: 0x006F, compare: 0x0001, type: relative, curve: 1.5, sensitivity: 0.4, cc: 94, default: 0, min: 0, max: 48, name: "Vibrato Amount"}  # Poly, BlueShift
     # Filter Decay:
     - {from_channel: 2, mask: 0x006F, compare: 0x0002, type: relative, cc: 75, default: 32, name: "F-Decay"}  # Poly, GreenShift = Envelopes
 
@@ -315,34 +309,9 @@ cc_mappings:
 #   mask      - shift bitmask (default 0)
 #   compare   - shift compare value (default 0)
 #   from_channel - only match this source channel (1-based, optional)
-#   mapping   - only match input devices with this mapping label
-#               (string or list of strings, optional)
 #   transpose - semitones to shift note number (+/-, clamped to 0-127)
 #   channel   - override destination channel (1-based)
 #   name      - descriptive label for logging
-#
-# ---- Adaptive Split Boundaries ----
-#
-# low/high can be a [note, boundary_name] pair to create an adaptive
-# split that tracks hand position:
-#
-#   high: [59, split1]     ← lower range ends here by default
-#   low:  [60, split1]     ← upper range starts here by default
-#
-# Ranges sharing the same boundary name are linked.  The split point
-# moves dynamically based on which notes are being played:
-#   - Nearby notes (within max_reach) pull the boundary toward them
-#   - The physical hand-span constraint (max_reach) prevents a single
-#     range from claiming notes too far apart
-#   - When both hands wander away from the split, it drifts back to
-#     the default position
-#   - Recently released notes are remembered so chords and scale runs
-#     maintain context
-#
-# Multiple boundaries are supported (e.g. split1, split2) to create
-# three or more zones (bass / center / treble).
-#
-# Configure max_reach (semitones) in config.yaml (default: 16).
 #
 # Notes that match at least one range are forwarded (possibly modified).
 # Notes that match NO ranges are passed through unchanged.
@@ -419,6 +388,11 @@ cc_mappings:
 note_mappings:
   - low: 0
     high: 127
+    from_channel: 10
+    channel: 10
+
+  - low: 0
+    high: 127
     from_channel: 13
     channel: 10
 
@@ -438,6 +412,7 @@ note_mappings:
     max_polyphony: 4
     polyphonic_distribution: [2, 4, 6, 7]
     allocation_strategy: first_available
+    # send_all for four-up
     after_poly_to_chan: true
     fallback_priority: most_recent
     replace_priority: highest
@@ -445,7 +420,8 @@ note_mappings:
     name: "Poly2"
 
   - low: 0
-    high: 59
+    high: [59, split1]
+    mapping: [keys]
     mask: 0x0001
     compare: 0x0000
     from_channel: 4
@@ -454,9 +430,10 @@ note_mappings:
     channel: 1
     name: "Bass4"
 
-  - low: 60
+  - low: [60, split1]
     high: 127
     mask: 0x0001
+    mapping: [keys]
     compare: 0x0000
     from_channel: 4
     polyphony_instance: chords
@@ -466,8 +443,9 @@ note_mappings:
     channel: 2
     name: "Poly4"
 
-  - low: 60
+  - low: [60, split2]
     high: 127
+    mapping: [keys]
     mask: 0x0001
     compare: 0x0001
     from_channel: 4
@@ -477,7 +455,8 @@ note_mappings:
     name: "Lead4"
 
   - low: 0
-    high: 59
+    high: [59, split2]
+    mapping: [keys]
     mask: 0x0001
     compare: 0x0001
     from_channel: 4

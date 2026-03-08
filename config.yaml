@@ -32,47 +32,46 @@ manufacturer_id: 0x7D
 #
 
 seq_delay: 0.05
-
-# Maximum hand span in semitones for adaptive split boundaries.
-# Notes beyond this distance from any tracked note in a range are
-# assumed to belong to the adjacent range.
 max_reach: 16
 
 routing:
   inputs:
     - device: "UMC404HD 192k"
-      channels: [15]
+      channels: [15,10]
     - device: "Launchpad Pro MK3 LPProMK3 MIDI"
       mapping: "pads"
-      channels: [1,2,4,10]
+      channels: [1,4,2,10]
       velocity_to_pressure: true
       note_debounce: 30        # ms — minimum note lifetime before release
       pressure_to_poly: [2,4]
       pressure_slew_up: 4000   # steps/sec — upward rate limit (0 = unlimited)
       pressure_slew_down: 2000 # steps/sec — downward rate limit (0 = unlimited)
-      pressure_shelf: 16
-      pressure_shelf_top: 32
+      pressure_shelf: 24
+      pressure_shelf_top: 38
       pressure_start: velocity
       velocity_decay: 250      # ms to reach shelf level
       velocity_curve:
         floor: 30
         low: 50
         cap: 99
+        high: 99
         curve: 0.5
       pressure_curve:
         floor: 9
         low: 50
         cap: 127
+        high: 127
         curve: 1.0
     - device: "Launchpad Pro MK3 LPProMK3 DIN"
       mapping: "keys"
-      channels: [1,2,4,10]
+      channels: [1,4,2,10]
       velocity_to_pressure: true
       velocity_decay: 250
       velocity_curve:
         floor: 18     # nothing goes below this
         low: 36       # input 36 → output 18
         high: 99      # input 99 → output 99
+        cap: 60
         curve: 1.0    # shape of the scaling between low and high
 #    - device: "IAC Driver Bus 1"
 #      channels: [13]

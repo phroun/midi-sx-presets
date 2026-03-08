@@ -1,3 +1,2 @@
-./venv/bin/python3 midi_preset_service.py --no-iac-input --midi-log midi.log
-
-
+./venv/bin/python3 midi_preset_service.py --no-iac-input
+# --midi-log midi.log
