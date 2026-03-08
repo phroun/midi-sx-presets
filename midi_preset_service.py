@@ -932,6 +932,7 @@ class MidiPresetService:
                 if "semitone_value" in ap and "octave_value" in ap:
                     porta_cfg["semitone_value"] = int(ap["semitone_value"])
                     porta_cfg["octave_value"] = int(ap["octave_value"])
+                    porta_cfg["porta_curve"] = float(ap.get("curve", 1.0))
                 nm["_auto_porta"] = porta_cfg
 
         # Resolve named polyphony instances
@@ -2758,7 +2759,10 @@ class MidiPresetService:
             # points, then scale by the current input proportion (0-127).
             v1 = auto_porta["semitone_value"]   # output CC at 1 semitone
             v12 = auto_porta["octave_value"]     # output CC at 12 semitones
-            t = max(0.0, min(1.0, (interval - 1) / 11.0))
+            t = (interval - 1) / 11.0
+            porta_curve = auto_porta.get("porta_curve", 1.0)
+            if porta_curve != 1.0 and t > 0:
+                t = t ** porta_curve
             baseline = v1 + (v12 - v1) * t
             # Scale by input proportion from the mapping's source control
             ref_ch = auto_porta["ref_ch"]
