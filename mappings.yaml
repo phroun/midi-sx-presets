@@ -387,13 +387,27 @@ cc_mappings:
 #
 # Auto-portamento — inject portamento CC before each note-on so the synth
 # glides from the previous pitch.  Input value 0 = instant (no glide).
-# Rate is scaled by interval: larger jumps get proportionally faster
-# portamento so the travel time stays roughly constant.
+# Rate is scaled by interval so the travel time stays roughly constant.
+#
+# Preferred: specify anchor output CC values for 1-semitone and 1-octave
+# glides.  Intermediate intervals are linearly interpolated, clamped 0–127.
+# The anchors define the baseline at full input (127); the actual value
+# is scaled proportionally by the mapping's current input (e.g. mod wheel).
+# reference_channel tells auto_portamento where to read the input value.
 #
 #   auto_portamento:
 #     target_cc: 84           # CC that controls portamento rate on the synth
 #     reference_channel: 1    # 1-based channel where the portamento
-#                             # destination state lives (set by mod wheel)
+#                             # mapping's input value is tracked
+#     semitone_value: 60      # output CC value for a 1-semitone glide (at full input)
+#     octave_value: 20        # output CC value for a 12-semitone glide (at full input)
+#
+# Legacy: when semitone_value/octave_value are omitted, the reference
+# channel's internal destination value is scaled by 1/interval.
+#
+#   auto_portamento:
+#     target_cc: 84
+#     reference_channel: 1
 #
 # Optional gated legato_only — uses the same condition format as
 # legato_steal (type: cc or seq, with channel/cc/min/max).  When the

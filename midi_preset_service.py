@@ -267,6 +267,13 @@ class MidiPresetService:
                     {k: int(v) for k, v in saved_dests.items()
                      if isinstance(v, (int, float))}
                 )
+        # Raw input values for auto_portamento proportional scaling
+        saved_inputs = data.get("dest_input_values")
+        if isinstance(saved_inputs, dict):
+            self.dest_input_values.update(
+                {k: int(v) for k, v in saved_inputs.items()
+                 if isinstance(v, (int, float))}
+            )
         # Preset cursor — now a {channel: note} dict (migrate from legacy scalar)
         saved_cursor = data.get("preset_cursor")
         if isinstance(saved_cursor, dict):
@@ -298,6 +305,7 @@ class MidiPresetService:
         data = {
             "version": self._STATE_VERSION,
             "destination_states": dict(self.destination_states),
+            "dest_input_values": dict(self.dest_input_values),
             "seq_states": dict(self.seq_states),
             "preset_cursor": self.preset_cursor,
             "intercept_mode": self.intercept_mode,
@@ -916,11 +924,15 @@ class MidiPresetService:
             # auto_portamento: inject portamento CC before voice transitions
             ap = nm.get("auto_portamento")
             if ap is not None:
-                nm["_auto_porta"] = {
+                porta_cfg = {
                     "target_cc": int(ap.get("target_cc", 84)),
-                    "ref_ch": int(ap.get("reference_channel", 1)) - 1,
                     "legato_only": ap.get("legato_only", False),
                 }
+                porta_cfg["ref_ch"] = int(ap.get("reference_channel", 1)) - 1
+                if "semitone_value" in ap and "octave_value" in ap:
+                    porta_cfg["semitone_value"] = int(ap["semitone_value"])
+                    porta_cfg["octave_value"] = int(ap["octave_value"])
+                nm["_auto_porta"] = porta_cfg
 
         # Resolve named polyphony instances
         self.poly_instances = self._resolve_poly_instances()
@@ -975,6 +987,7 @@ class MidiPresetService:
         self.shift_state = 0            # 16-bit bitmask
         self.joystick_states = {}       # index -> {neg_held, pos_held, latch}
         self.destination_states = {}    # "cc_ch" -> 14-bit internal value (0-16383)
+        self.dest_input_values = {}    # "cc_ch" -> raw input value (0-127)
         self._map_log_times = {}        # "cc_ch" -> last log timestamp (debounce)
         self.poly_states = {}           # pool_key -> {held: [...], active: [...]}
         self.note_on_origins = {}       # (ch0, note) -> origin info for note-off routing
@@ -2276,6 +2289,8 @@ class MidiPresetService:
                 internal = self._set_dest(target_cc, target_ch, internal)
                 output = self._output_value(target_cc, target_ch, internal,
                                             curve, min_v, max_v)
+                # Store raw input for auto_portamento proportional scaling
+                self.dest_input_values[self._dest_key(target_cc, target_ch)] = msg.value
 
             self._send_cc(target_cc, target_ch, output)
 
@@ -2711,15 +2726,19 @@ class MidiPresetService:
         if auto_porta is None:
             return None, None
         target_cc = auto_porta["target_cc"]
-        ref_ch = auto_porta["ref_ch"]
         legato_only = auto_porta["legato_only"]
+        use_anchors = "semitone_value" in auto_porta
+
+        def _instant_val():
+            if use_anchors:
+                return 0
+            return self._output_value(target_cc, out_ch, 0)
 
         prev_pitch = self.auto_porta_last_pitch.get(out_ch)
 
         # Instant cases: no predecessor, retrigger
         if prev_pitch is None or reason == "retrigger":
-            output = self._output_value(target_cc, out_ch, 0)
-            return output, "instant"
+            return _instant_val(), "instant"
 
         # legato_only gate: when condition is met, only steal/legato/replace
         # get portamento; otherwise everything with a predecessor does
@@ -2727,18 +2746,34 @@ class MidiPresetService:
             gate_on = (legato_only is True
                        or self._check_legato_steal(legato_only))
             if gate_on and reason not in ("replace", "legato", "fallback"):
-                output = self._output_value(target_cc, out_ch, 0)
-                return output, "instant(gated)"
+                return _instant_val(), "instant(gated)"
 
-        # Glide: scale reference portamento by interval
+        # Glide: scale portamento by interval
         interval = abs(pitch - prev_pitch)
         if interval == 0:
-            output = self._output_value(target_cc, out_ch, 0)
-            return output, "instant(unison)"
-        ref_internal = self._get_dest(target_cc, ref_ch)
-        scaled = round(ref_internal / interval)
-        output = self._output_value(target_cc, out_ch, scaled)
-        return output, f"glide({interval}st)"
+            return 0, "instant(unison)"
+
+        if "semitone_value" in auto_porta:
+            # Anchor mode: interpolate between semitone/octave reference
+            # points, then scale by the current input proportion (0-127).
+            v1 = auto_porta["semitone_value"]   # output CC at 1 semitone
+            v12 = auto_porta["octave_value"]     # output CC at 12 semitones
+            t = (interval - 1) / 11.0
+            baseline = v1 + (v12 - v1) * t
+            # Scale by input proportion from the mapping's source control
+            ref_ch = auto_porta["ref_ch"]
+            input_key = self._dest_key(target_cc, ref_ch)
+            input_val = self.dest_input_values.get(input_key, 127)
+            factor = input_val / 127.0
+            output = max(0, min(127, round(baseline * factor)))
+            return output, f"glide({interval}st,in={input_val})"
+        else:
+            # Legacy: scale reference portamento by interval
+            ref_ch = auto_porta["ref_ch"]
+            ref_internal = self._get_dest(target_cc, ref_ch)
+            scaled = round(ref_internal / interval)
+            output = self._output_value(target_cc, out_ch, scaled)
+            return output, f"glide({interval}st)"
 
     def _process_poly_actions(self, actions, name, pool_label, state, max_poly,
                               auto_porta=None):
