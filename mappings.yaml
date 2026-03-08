@@ -403,6 +403,8 @@ cc_mappings:
 #     octave_value: 20        # output CC value for a 12-semitone glide (at full input)
 #     curve: 0.5              # power curve on interpolation (default 1.0 = linear)
 #                             # <1 flattens beyond octave, >1 steepens
+#     floor: 10               # minimum output value (default 0)
+#     cap: 100                # maximum output value (default 127)
 #
 # Legacy: when semitone_value/octave_value are omitted, the reference
 # channel's internal destination value is scaled by 1/interval.

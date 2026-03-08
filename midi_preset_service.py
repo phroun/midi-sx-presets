@@ -933,6 +933,10 @@ class MidiPresetService:
                     porta_cfg["semitone_value"] = int(ap["semitone_value"])
                     porta_cfg["octave_value"] = int(ap["octave_value"])
                     porta_cfg["porta_curve"] = float(ap.get("curve", 1.0))
+                    if "floor" in ap:
+                        porta_cfg["porta_floor"] = int(ap["floor"])
+                    if "cap" in ap:
+                        porta_cfg["porta_cap"] = int(ap["cap"])
                 nm["_auto_porta"] = porta_cfg
 
         # Resolve named polyphony instances
@@ -2769,7 +2773,9 @@ class MidiPresetService:
             input_key = self._dest_key(target_cc, ref_ch)
             input_val = self.dest_input_values.get(input_key, 127)
             factor = input_val / 127.0
-            output = max(0, min(127, round(baseline * factor)))
+            floor_v = auto_porta.get("porta_floor", 0)
+            cap_v = auto_porta.get("porta_cap", 127)
+            output = max(floor_v, min(cap_v, round(baseline * factor)))
             return output, f"glide({interval}st,in={input_val})"
         else:
             # Legacy: scale reference portamento by interval
