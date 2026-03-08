@@ -2251,8 +2251,19 @@ class MidiPresetService:
                                             curve, min_v, max_v)
             else:
                 delta = None
+                # For inverted ranges (min > max), swap params for
+                # _inverse_output so it maps the raw 0-127 position
+                # linearly to internal space.  _output_value then
+                # applies the actual inversion on output.  Without
+                # the swap, _inverse_output and _output_value both
+                # invert, cancelling each other out.
+                if min_v > max_v:
+                    inv_min, inv_max = max_v, min_v
+                else:
+                    inv_min, inv_max = min_v, max_v
                 internal = self._inverse_output(target_cc, target_ch,
-                                                msg.value, curve, min_v, max_v)
+                                                msg.value, curve,
+                                                inv_min, inv_max)
                 internal = self._set_dest(target_cc, target_ch, internal)
                 output = self._output_value(target_cc, target_ch, internal,
                                             curve, min_v, max_v)
