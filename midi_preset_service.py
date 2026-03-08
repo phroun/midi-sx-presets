@@ -2716,8 +2716,8 @@ class MidiPresetService:
 
         prev_pitch = self.auto_porta_last_pitch.get(out_ch)
 
-        # Instant cases: no predecessor, retrigger, fallback
-        if prev_pitch is None or reason == "retrigger" or reason == "fallback":
+        # Instant cases: no predecessor, retrigger
+        if prev_pitch is None or reason == "retrigger":
             output = self._output_value(target_cc, out_ch, 0)
             return output, "instant"
 
@@ -2726,7 +2726,7 @@ class MidiPresetService:
         if legato_only:
             gate_on = (legato_only is True
                        or self._check_legato_steal(legato_only))
-            if gate_on and reason not in ("replace", "legato"):
+            if gate_on and reason not in ("replace", "legato", "fallback"):
                 output = self._output_value(target_cc, out_ch, 0)
                 return output, "instant(gated)"
 
@@ -2783,9 +2783,6 @@ class MidiPresetService:
                 a_out_ch = action[4]
                 out_note = action[1] + a_transpose
                 if 0 <= out_note <= 127:
-                    # Clear last pitch on release (channel freed)
-                    if auto_porta is not None and action[2] == "release":
-                        self.auto_porta_last_pitch.pop(a_out_ch, None)
                     results.append(mido.Message(
                         "note_off", note=out_note, channel=a_out_ch,
                         velocity=0))
