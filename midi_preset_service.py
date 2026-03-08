@@ -1562,10 +1562,14 @@ class MidiPresetService:
         norm = internal / self._INTERNAL_MAX
         curved = norm ** curve if curve != 1.0 else norm
         output = round(min_v + (max_v - min_v) * curved)
-        return max(min_v, min(max_v, output))
+        lo, hi = (min_v, max_v) if min_v <= max_v else (max_v, min_v)
+        return max(lo, min(hi, output))
 
     def _inverse_output(self, cc, channel, output_val, curve=None, min_v=None, max_v=None):
-        """Convert a 7-bit output-space value back to 14-bit internal."""
+        """Convert a 7-bit output-space value back to 14-bit internal.
+
+        Supports inverted ranges (min > max) for inverted CC output.
+        """
         if curve is None or min_v is None or max_v is None:
             c, mn, mx = self._resolve_dest_params(cc, channel)
             if curve is None:
